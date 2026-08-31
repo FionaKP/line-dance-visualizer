@@ -1,0 +1,1318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Line Dance Visualizer</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --panel: #181b24;
+    --panel-2: #1f2330;
+    --border: #2a2f3f;
+    --text: #e8eaf0;
+    --muted: #9aa0b0;
+    --left: #2dd4bf;
+    --right: #fb923c;
+    --accent: #8b9cf9;
+    --warn: #f0c05a;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Segoe UI", system-ui, sans-serif;
+    min-height: 100vh;
+    padding: 20px;
+  }
+  .app { max-width: 1040px; margin: 0 auto; }
+  header { margin-bottom: 16px; }
+  header h1 { font-size: 1.35rem; font-weight: 600; }
+  header .meta { color: var(--muted); font-size: 0.85rem; margin-top: 4px; }
+  header .meta a { color: var(--accent); text-decoration: none; }
+  header .meta a:hover { text-decoration: underline; }
+
+  .layout {
+    display: grid;
+    grid-template-columns: 520px 1fr;
+    gap: 16px;
+    align-items: start;
+  }
+  @media (max-width: 900px) {
+    .layout { grid-template-columns: 1fr; }
+  }
+
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    overflow: hidden;
+  }
+
+  svg#floor { display: block; width: 100%; height: auto; }
+
+  .now {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 12px 16px;
+    border-top: 1px solid var(--border);
+    background: var(--panel-2);
+    min-height: 64px;
+  }
+  .now .count {
+    font-size: 2rem;
+    font-weight: 700;
+    width: 52px;
+    text-align: center;
+    color: var(--accent);
+    font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
+  }
+  .now .what .section { color: var(--muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; }
+  .now .what .step { font-size: 0.95rem; margin-top: 2px; }
+
+  .progress {
+    display: flex;
+    gap: 3px;
+    padding: 10px 16px 4px;
+    background: var(--panel-2);
+  }
+  .progress .cell {
+    flex: 1;
+    height: 8px;
+    border-radius: 3px;
+    background: var(--border);
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .progress .cell.sec-gap { margin-left: 8px; }
+  .progress .cell.done { background: #3d4358; }
+  .progress .cell.active { background: var(--accent); }
+
+  .controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 16px 16px;
+    background: var(--panel-2);
+  }
+  button {
+    background: var(--panel);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  button:hover { border-color: var(--accent); }
+  button.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #12131a;
+    font-weight: 600;
+    min-width: 76px;
+  }
+  button.toggled {
+    background: #2c3350;
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .bpm {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
+  .bpm input[type=range] { width: 110px; accent-color: var(--accent); }
+  .bpm .val { color: var(--text); min-width: 62px; font-variant-numeric: tabular-nums; }
+
+  .sheet { padding: 14px 16px; }
+  .sheet h2 { font-size: 0.95rem; margin-bottom: 10px; }
+  .sheet .intro { color: var(--muted); font-size: 0.8rem; margin-bottom: 12px; }
+  .sec-title {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--muted);
+    margin: 14px 0 6px;
+  }
+  .sec-title:first-of-type { margin-top: 0; }
+  .line {
+    display: flex;
+    gap: 10px;
+    padding: 7px 10px;
+    border-radius: 8px;
+    font-size: 0.86rem;
+    cursor: pointer;
+    border: 1px solid transparent;
+  }
+  .line:hover { background: var(--panel-2); }
+  .line.active { background: #262c44; border-color: var(--accent); }
+  .line .counts {
+    color: var(--accent);
+    font-weight: 600;
+    width: 40px;
+    flex-shrink: 0;
+    font-variant-numeric: tabular-nums;
+  }
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px 16px;
+    padding: 12px 16px;
+    border-top: 1px solid var(--border);
+    font-size: 0.78rem;
+    color: var(--muted);
+  }
+  .legend .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; vertical-align: -1px; }
+  .legend .dash {
+    display: inline-block; width: 18px; height: 0; margin-right: 5px; vertical-align: 3px;
+    border-top: 3px dashed var(--muted);
+  }
+  .hint { color: var(--muted); font-size: 0.75rem; margin-top: 10px; }
+  kbd {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 5px;
+    font-size: 0.72rem;
+  }
+
+  .loader { margin-top: 16px; }
+  .loader summary {
+    cursor: pointer;
+    padding: 12px 16px;
+    font-size: 0.9rem;
+    font-weight: 600;
+  }
+  .loader-body { padding: 0 16px 14px; }
+  .loader textarea {
+    width: 100%;
+    height: 180px;
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px;
+    font-family: Consolas, monospace;
+    font-size: 0.78rem;
+    resize: vertical;
+  }
+  .loader .row { display: flex; gap: 8px; margin-top: 8px; align-items: center; }
+  .loader .note { color: var(--muted); font-size: 0.75rem; }
+  .warnings { margin-top: 8px; font-size: 0.78rem; color: var(--warn); }
+  .warnings div { margin-top: 3px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1 id="dance-title"></h1>
+    <div class="meta" id="dance-meta"></div>
+  </header>
+
+  <div class="layout">
+    <div class="card">
+      <svg id="floor" viewBox="0 0 520 440">
+        <defs>
+          <pattern id="grid" width="50" height="50" patternUnits="userSpaceOnUse">
+            <path d="M 50 0 L 0 0 0 50" fill="none" stroke="#232838" stroke-width="1"/>
+          </pattern>
+          <radialGradient id="weightGlow">
+            <stop offset="0%" stop-color="#ffffff" stop-opacity="0.22"/>
+            <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+          </radialGradient>
+        </defs>
+        <rect width="520" height="440" fill="#131722"/>
+        <g id="world">
+          <rect x="-3000" y="-3000" width="6000" height="6000" fill="url(#grid)"/>
+          <path id="turn-arc" fill="none" stroke="#8b9cf9" stroke-width="3" stroke-dasharray="7 6" stroke-linecap="round" opacity="0"/>
+          <path id="turn-arrow" fill="#8b9cf9" opacity="0"/>
+          <text id="turn-label" font-size="15" font-weight="700" fill="#8b9cf9" text-anchor="middle" opacity="0"></text>
+          <circle id="dotL" r="5" fill="none" stroke="#2dd4bf" stroke-width="2" opacity="0"/>
+          <circle id="dotR" r="5" fill="none" stroke="#fb923c" stroke-width="2" opacity="0"/>
+          <line id="trailL" stroke="#2dd4bf" stroke-width="3" stroke-dasharray="6 7" stroke-linecap="round" opacity="0"/>
+          <line id="trailR" stroke="#fb923c" stroke-width="3" stroke-dasharray="6 7" stroke-linecap="round" opacity="0"/>
+          <ellipse id="glow" rx="42" ry="30" fill="url(#weightGlow)"/>
+          <ellipse id="shadowL" rx="14" ry="7" fill="#000" opacity="0.35"/>
+          <ellipse id="shadowR" rx="14" ry="7" fill="#000" opacity="0.35"/>
+          <g id="footL"></g>
+          <g id="footR"></g>
+        </g>
+        <g id="compass" transform="translate(464, 52)">
+          <circle r="36" fill="#181b24" stroke="#2a2f3f"/>
+          <g id="compass-labels" font-size="9" fill="#9aa0b0" text-anchor="middle">
+            <text x="0" y="-25">12:00</text>
+            <text x="27" y="3">3</text>
+            <text x="0" y="31">6</text>
+            <text x="-27" y="3">9</text>
+          </g>
+          <path id="compass-arrow" d="M0,-16 L6,6 L0,2 L-6,6 Z" fill="#8b9cf9"/>
+        </g>
+        <text id="wall-label" x="16" y="28" font-size="12" fill="#9aa0b0"></text>
+      </svg>
+      <div class="progress" id="progress"></div>
+      <div class="now">
+        <div class="count" id="now-count">1</div>
+        <div class="what">
+          <div class="section" id="now-section"></div>
+          <div class="step" id="now-step">Press play to start</div>
+        </div>
+      </div>
+      <div class="controls">
+        <button class="primary" id="btn-play">Play</button>
+        <button id="btn-restart" title="Back to count 1">&#8676;</button>
+        <button id="btn-prev" title="Previous step">&#9664;</button>
+        <button id="btn-next" title="Next step">&#9654;</button>
+        <button id="btn-loop-sec" title="Repeat the current section">Loop section</button>
+        <button id="btn-follow" title="Rotate the floor so forward is always up">Follow</button>
+        <button id="btn-tick" title="Count clicks">Clicks</button>
+        <div class="bpm">
+          <span>Tempo</span>
+          <input type="range" id="bpm" min="40" max="140" value="96">
+          <span class="val" id="bpm-val">96 bpm</span>
+        </div>
+      </div>
+      <div class="legend">
+        <span><span class="dot" style="background:var(--left)"></span>Left foot</span>
+        <span><span class="dot" style="background:var(--right)"></span>Right foot</span>
+        <span><span class="dot" style="background:#fff;opacity:0.5"></span>Glow = weighted foot</span>
+        <span><span class="dash"></span>Travel path</span>
+      </div>
+    </div>
+
+    <div>
+      <div class="card sheet">
+        <h2>Stepsheet</h2>
+        <div class="intro" id="sheet-intro"></div>
+        <div id="sheet-lines"></div>
+        <div class="hint">Click a line to jump to it. <kbd>Space</kbd> play/pause, <kbd>&#8592;</kbd>/<kbd>&#8594;</kbd> step by step.</div>
+      </div>
+
+      <details class="card loader">
+        <summary>Load a different stepsheet</summary>
+        <div class="loader-body">
+          <textarea id="sheet-input" spellcheck="false"></textarea>
+          <div class="row">
+            <button class="primary" id="btn-load">Parse and load</button>
+            <span class="note">Paste the text of a CopperKnob stepsheet (title and Count/Wall/Choreo/Music lines optional).</span>
+          </div>
+          <div class="warnings" id="warnings"></div>
+        </div>
+      </details>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+// ---------------------------------------------------------------------------
+// Stepsheet parser. Turns CopperKnob-style text into timed events:
+// { beat, c, foot, dx, dy, turn, lifted, weight, aOff, txt }
+// dx/dy are in the dancer's frame relative to the OTHER foot (dx = toward the
+// dancer's right, dy = forward, floor units). Offsets below are written for
+// the right foot; dx and aOff are mirrored for the left.
+// ---------------------------------------------------------------------------
+
+const KIND = {
+  side:               { dx: 1.7,   dy: 0 },
+  close:              { dx: 0.85,  dy: 0 },
+  place:              { dx: 0.85,  dy: 0 },
+  fwd:                { dx: 0.85,  dy: 0.9 },
+  back:               { dx: 0.85,  dy: -0.9 },
+  shuffle_open_fwd:   { dx: 0.85,  dy: 0.85 },
+  shuffle_close_fwd:  { dx: 0.85,  dy: -0.35 },
+  shuffle_open_back:  { dx: 0.85,  dy: -0.85 },
+  shuffle_close_back: { dx: 0.85,  dy: 0.35 },
+  shuffle_open_side:  { dx: 1.6,   dy: 0 },
+  shuffle_close_side: { dx: 0.85,  dy: 0 },
+  cross_front:        { dx: -0.4,  dy: 0.35 },
+  cross_back:         { dx: -0.4,  dy: -0.35 },
+  rock_fwd:           { dx: 0.85,  dy: 1.05 },
+  rock_back:          { dx: 0.85,  dy: -1.1 },
+  rock_side:          { dx: 1.5,   dy: 0 },
+  stomp:              { dx: 0.85,  dy: 0.35 },
+  touch_beside:       { dx: 0.85,  dy: 0, lifted: true },
+  touch_side:         { dx: 1.55,  dy: 0, lifted: true },
+  touch_fwd:          { dx: 0.85,  dy: 0.8, lifted: true },
+  touch_back:         { dx: 0.85,  dy: -0.8, lifted: true },
+  kick:               { dx: 0.6,   dy: 1.1, lifted: true },
+  hook:               { dx: -0.12, dy: 0.4, lifted: true },
+  hitch:              { dx: 0.75,  dy: 0.15, lifted: true },
+  scuff:              { dx: 0.7,   dy: 0.9, lifted: true },
+  sweep:              { dx: 1.3,   dy: 0.6, lifted: true },
+  skate:              { dx: 1.0,   dy: 0.75, aOff: 18 }
+};
+
+const FRAC = {
+  "1/4": 90, "¼": 90, "quarter": 90,
+  "1/2": 180, "½": 180, "half": 180,
+  "3/4": 270, "¾": 270,
+  "full": 360
+};
+const FRAC_RE = "(1\\/4|1\\/2|3\\/4|\\u00bc|\\u00bd|\\u00be|quarter|half|full)";
+
+function matchTurn(s) {
+  let m = s.match(new RegExp(FRAC_RE + "\\s*(?:of\\s+a\\s+)?turn\\s*(?:to\\s+)?(?:the\\s+)?(left|right)", "i"))
+       || s.match(new RegExp("turn(?:ing)?\\s*" + FRAC_RE + "\\s*(?:turn\\s*)?(?:to\\s+)?(?:the\\s+)?(left|right)", "i"))
+       || s.match(new RegExp(FRAC_RE + "\\s*(left|right)\\s*turn", "i"));
+  if (!m) return null;
+  const deg = FRAC[m[1].toLowerCase()];
+  return { deg: m[2].toLowerCase() === "left" ? -deg : deg, raw: m[0] };
+}
+
+function footIn(s) {
+  const m = s.match(/\b(right|left)\b/i);
+  return m ? (m[1].toLowerCase() === "right" ? "R" : "L") : null;
+}
+function other(f) { return f === "R" ? "L" : "R"; }
+function cap(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
+
+// Parses one comma-separated phrase into zero or more steps.
+// A step: { kind, foot } | { kind:'recover'|'pivot'|'hold', ... }
+function parsePhrase(raw, ctx, warn) {
+  let p = raw.trim().replace(/^and\s+/i, "").replace(/\s+/g, " ");
+  if (!p) return [];
+  const lower = p.toLowerCase();
+  const foot = footIn(lower);
+  const out = [];
+  const push = (kind, f, extra) => {
+    const st = Object.assign({ kind, foot: f, txt: cap(p) }, extra);
+    out.push(st);
+    if (f && !KIND[kind]?.lifted && kind !== "recover") ctx.lastFoot = f;
+    return st;
+  };
+
+  if (/^(hold|clap|snap)\b/.test(lower)) { out.push({ kind: "hold", txt: cap(p) }); return out; }
+  if (/\bpivot\b|\bpaddle\b/.test(lower)) { out.push({ kind: "pivot", txt: cap(p) }); return out; }
+
+  if (/\b(shuffle|chassé|chasse|triple)\b/.test(lower)) {
+    const dir = /\bback\b/.test(lower) ? "back" : /\bside\b/.test(lower) ? "side" : "fwd";
+    const feet = [...lower.matchAll(/\b(right|left)\b/g)].map(m => m[1] === "right" ? "R" : "L");
+    const first = feet[0] || other(ctx.lastFoot || "L");
+    ctx.mode = "shuffle"; ctx.dir = dir; ctx.shufflePos = 0;
+    const seq = feet.length >= 2 ? feet : [first];
+    for (const f of seq) {
+      const open = ctx.shufflePos % 2 === 0;
+      push(open ? "shuffle_open_" + dir : "shuffle_close_" + dir, f);
+      ctx.shufflePos++;
+    }
+    if (ctx.shufflePos >= 3) ctx.mode = null;
+    return out;
+  }
+
+  if (/\b(grapevine|vine)\b/.test(lower)) {
+    const f = foot || "R";
+    push("side", f);
+    push("cross_back", other(f));
+    push("side", f);
+    if (/\btouch\b/.test(lower)) push("touch_beside", other(f));
+    ctx.mode = null;
+    return out;
+  }
+
+  if (/\brock\b/.test(lower)) {
+    const kind = /\b(back|backwards?)\b/.test(lower) ? "rock_back"
+               : /\bside\b/.test(lower) ? "rock_side" : "rock_fwd";
+    push(kind, foot || other(ctx.lastFoot || "L"));
+    return out;
+  }
+  if (/\b(recover|replace)\b/.test(lower)) {
+    out.push({ kind: "recover", foot: foot || other(ctx.lastFoot || "L"), txt: cap(p) });
+    if (out[0].foot) ctx.lastFoot = out[0].foot;
+    return out;
+  }
+
+  if (/\bhook\b/.test(lower)) { push("hook", foot || other(ctx.lastFoot || "L")); return out; }
+  if (/\bhitch\b/.test(lower)) { push("hitch", foot || other(ctx.lastFoot || "L")); return out; }
+  if (/\bscuff\b/.test(lower)) { push("scuff", foot || other(ctx.lastFoot || "L")); return out; }
+  if (/\bskate\b/.test(lower)) { push("skate", foot || other(ctx.lastFoot || "L")); return out; }
+  if (/\bsweep\b/.test(lower)) { push("sweep", foot || other(ctx.lastFoot || "L")); return out; }
+  if (/\bkick\b/.test(lower)) { push("kick", foot || other(ctx.lastFoot || "L")); return out; }
+  if (/\bstomp\b/.test(lower)) { push("stomp", foot || other(ctx.lastFoot || "L")); return out; }
+  if (/\b(touch|point|tap)\b/.test(lower)) {
+    const kind = /\b(beside|together|next)\b/.test(lower) ? "touch_beside"
+               : /\b(forward|fwd|front)\b/.test(lower) ? "touch_fwd"
+               : /\b(back|behind)\b/.test(lower) ? "touch_back" : "touch_side";
+    push(kind, foot || other(ctx.lastFoot || "L"));
+    return out;
+  }
+
+  // generic steps, walks, and bare-foot continuations
+  const stepLike = /\b(step|walk|stroll|run|stride)\b/.test(lower);
+  const bareFoot = /^(right|left)$/.test(lower);
+  if (stepLike || bareFoot || ctx.mode) {
+    if (/\bwalk\b/.test(lower)) ctx.mode = "walk";
+    const f = foot || other(ctx.lastFoot || "L");
+    if (ctx.mode === "shuffle" && (bareFoot || !stepLike)) {
+      const open = ctx.shufflePos % 2 === 0;
+      push(open ? "shuffle_open_" + ctx.dir : "shuffle_close_" + ctx.dir, f);
+      ctx.shufflePos++;
+      if (ctx.shufflePos >= 3) ctx.mode = null;
+      return out;
+    }
+    let kind;
+    if (/\b(beside|together|next to|close|home)\b/.test(lower)) kind = "close";
+    else if (/\bin place\b/.test(lower)) kind = "place";
+    else if (/\bbehind\b/.test(lower)) kind = "cross_back";
+    else if (/\b(across|over|cross)\b/.test(lower)) kind = "cross_front";
+    else if (/\bside\b/.test(lower)) kind = "side";
+    else if (/\b(forward|fwd)\b/.test(lower)) kind = "fwd";
+    else if (/\bback\b/.test(lower)) kind = "back";
+    else if (bareFoot && ctx.mode === "walk") kind = "fwd";
+    else { kind = "close"; warn("Guessed 'step together' for: \"" + p + "\""); }
+    push(kind, f);
+    return out;
+  }
+
+  if (/\bcross\b/.test(lower)) {
+    push(/\bbehind\b/.test(lower) ? "cross_back" : "cross_front", foot || other(ctx.lastFoot || "L"));
+    return out;
+  }
+
+  warn("Skipped unrecognized phrase: \"" + p + "\"");
+  return out;
+}
+
+function parseStepsheet(text) {
+  const warnings = [];
+  const warn = m => warnings.push(m);
+  const meta = {};
+
+  let m;
+  if ((m = text.match(/\bcounts?\s*:\s*(\d+)/i))) meta.count = +m[1];
+  if ((m = text.match(/\bwalls?\s*:\s*(\d+)/i))) meta.walls = +m[1];
+  if ((m = text.match(/\blevel\s*:\s*([A-Za-z][A-Za-z /+-]*)/i))) meta.level = m[1].trim();
+  if ((m = text.match(/^chore(?:o|ographer)?s?\s*:\s*(.+)$/im))) meta.choreo = m[1].trim();
+  if ((m = text.match(/^music\s*:\s*(.+)$/im))) meta.music = m[1].trim();
+
+  const sections = [];   // { name, startBeat, beats }
+  const lines = [];      // { sec, counts, text, b0, b1 }
+  const events = [];
+  let wallTurn = 0;
+  let title = null;
+  let intro = null;
+
+  let offset = 0;
+  let pendingName = null;
+  let cur = null;        // current section
+  let prevFirstNum = Infinity;
+  let maxBeat = 0;       // highest 0-based beat used in current section
+
+  const closeSection = () => {
+    if (cur) { cur.beats = Math.ceil(maxBeat + 0.5); offset += cur.beats; }
+    cur = null; maxBeat = 0;
+  };
+
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("(")) continue;
+    if (/^(repeat|ending|contact|last update|note)\b/i.test(line)) {
+      if (/^(tag|restart)/i.test(line)) warn("Tags/restarts are not supported yet: \"" + line + "\"");
+      continue;
+    }
+    if (/^(tag|restart)/i.test(line)) { warn("Tags/restarts are not supported yet: \"" + line + "\""); continue; }
+    if (/^starts?\b/i.test(line)) { intro = line; continue; }
+    if (/^(counts?|walls?|level|chore|music)\b\s*:/i.test(line)) continue;
+
+    const cm = line.match(/^([0-9][0-9&,\-\s]*)(.*)$/);
+    if (cm && cm[2] && /[A-Za-z]/.test(cm[2]) && cm[2].trim().length > 3) {
+      // a counted step line
+      let countStr = cm[1].trim();
+      let desc = cm[2].trim();
+
+      // expand ranges like "1-4"
+      const expanded = countStr.replace(/(\d+)\s*-\s*(\d+)/g, (_, a, b) => {
+        const out = [];
+        for (let n = +a; n <= +b; n++) out.push(n);
+        return out.join(" ");
+      });
+      const tokens = [];
+      for (const tk of expanded.match(/(\d+|&)/g) || []) {
+        if (tk === "&") {
+          if (tokens.length) tokens.push({ c: "&", beat: tokens[tokens.length - 1].beat + 0.5 });
+        } else if (+tk >= 1 && +tk <= 96) {
+          tokens.push({ c: tk, beat: +tk - 1 });
+        }
+      }
+      if (!tokens.length) continue;
+
+      // section bookkeeping: counts restarting from 1 mean a new section
+      const firstNum = tokens[0].beat;
+      if (!cur || firstNum < prevFirstNum || pendingName) {
+        closeSection();
+        cur = { name: pendingName || "Section " + (sections.length + 1), startBeat: offset, beats: 8 };
+        sections.push(cur);
+        pendingName = null;
+      }
+      prevFirstNum = firstNum;
+
+      // pull out the end-of-wall note before general turn matching
+      const noteM = desc.match(/note\s*:.*$/i);
+      let cleaned = desc.replace(/\(.*?\)/g, " ");
+      if (noteM) {
+        const noteTurn = matchTurn(noteM[0].replace(/\(.*?\)/g, " "));
+        if (noteTurn && /new wall|next wall|to start/i.test(noteM[0])) wallTurn = noteTurn.deg;
+        cleaned = cleaned.replace(/note\s*:.*$/i, " ");
+      }
+
+      const phrases = cleaned.split(/[,;]/);
+      let turnInfo = null, turnPhraseIdx = -1;
+      for (let i = 0; i < phrases.length; i++) {
+        const t = matchTurn(phrases[i]);
+        if (t) { turnInfo = t; turnPhraseIdx = i; phrases[i] = phrases[i].replace(t.raw, " "); break; }
+      }
+
+      const ctx = { mode: null, dir: "fwd", shufflePos: 0, lastFoot: null };
+      const steps = [];
+      const phraseFirstStep = [];
+      for (let i = 0; i < phrases.length; i++) {
+        phraseFirstStep[i] = steps.length;
+        const got = parsePhrase(phrases[i], ctx, warn);
+        if (!got.length && i === turnPhraseIdx) got.push({ kind: "pivot", txt: cap(phrases[i].trim() || "Turn") });
+        steps.push(...got);
+      }
+
+      if (turnInfo) {
+        if (steps.length === 3 && steps.every(s => s.kind.startsWith("shuffle"))) {
+          for (const s of steps) s.turn = turnInfo.deg / 3;
+        } else {
+          const idx = Math.min(phraseFirstStep[Math.max(turnPhraseIdx, 0)] || 0, steps.length - 1);
+          if (steps[idx]) steps[idx].turn = turnInfo.deg;
+        }
+      }
+
+      if (steps.length !== tokens.length) {
+        warn("Counts \"" + countStr + "\" have " + tokens.length + " beats but " + steps.length +
+             " steps were parsed: \"" + desc + "\"");
+      }
+      const n = Math.min(steps.length, tokens.length);
+      const b0 = cur.startBeat + tokens[0].beat;
+      let b1 = b0;
+      let lastFootForPivot = null;
+      for (let i = 0; i < n; i++) {
+        const st = steps[i], tk = tokens[i];
+        const beat = cur.startBeat + tk.beat;
+        maxBeat = Math.max(maxBeat, tk.beat);
+        b1 = beat;
+        const ev = { beat, c: tk.c, txt: st.txt };
+        if (st.turn) ev.turn = st.turn;
+        if (st.kind === "hold") { /* no movement */ }
+        else if (st.kind === "recover") { ev.weight = st.foot; }
+        else if (st.kind === "pivot") { ev.weight = other(lastFootForPivot || "L"); }
+        else {
+          const k = KIND[st.kind];
+          ev.foot = st.foot;
+          ev.dx = st.foot === "L" ? -k.dx : k.dx;
+          ev.dy = k.dy;
+          if (k.lifted) ev.lifted = true;
+          if (k.aOff) ev.aOff = st.foot === "L" ? -k.aOff : k.aOff;
+          if (!k.lifted) lastFootForPivot = st.foot;
+        }
+        events.push(ev);
+      }
+      lines.push({ sec: sections.length - 1, counts: countStr.replace(/\s+/g, " "), text: desc, b0, b1 });
+      continue;
+    }
+
+    // non-counted line: header, title, or noise
+    if (/^section\b/i.test(line) ||
+        (/[A-Za-z]{3}/.test(line) && line === line.toUpperCase() && !/^\d/.test(line))) {
+      pendingName = line.replace(/^section\s*\d+\s*[:.-]?\s*/i, "").trim() || line;
+      continue;
+    }
+    if (!title && lines.length === 0 && sections.length === 0 && line.length < 80 &&
+        !/:/.test(line)) {
+      title = line;
+    }
+  }
+  closeSection();
+
+  if (!events.length) { warn("No step lines found."); return { events, sections, lines, warnings, ok: false }; }
+
+  // facing change per wall determines the wall count
+  const netTurn = events.reduce((s, e) => s + (e.turn || 0), 0) + wallTurn;
+  const change = ((Math.round(netTurn) % 360) + 360) % 360;
+  const gcd = (a, b) => b ? gcd(b, a % b) : a;
+  const walls = change === 0 ? 1 : 360 / gcd(change, 360);
+  if (meta.walls && meta.walls !== walls) {
+    warn("Sheet says " + meta.walls + " walls but the parsed turns give " + walls +
+         (walls === 1 ? " (no turn between walls was found)" : "") + ".");
+  }
+  const wallBeats = offset;
+  if (meta.count && meta.count !== wallBeats) {
+    warn("Sheet says " + meta.count + " counts but the parsed sections total " + wallBeats + ".");
+  }
+
+  return {
+    ok: true, events, sections, lines, warnings,
+    title: title || "Pasted dance",
+    meta, intro, wallTurn, walls, wallBeats
+  };
+}
+
+// ---------------------------------------------------------------------------
+// The default dance: parsed from the raw CopperKnob text below.
+// ---------------------------------------------------------------------------
+
+const RAW_SHEET = `Choosin' Texas
+Count: 24  Wall: 4  Level: Beginner
+Choreo: Nidhi Risi (CAN) - December 2025
+Music: Choosin' Texas - Ella Langley
+
+Starts after 32 counts (...thought) - NO TAGS/NO RESTARTS
+
+SECTION 1: MODIFIED RUMBA BOX FORWARD
+1 2 Step right to right side, step left beside right
+3&4 Shuffle fwd right, left, right
+5 6 Step left to left side, step right beside left
+7&8 Shuffle back left, right, left
+
+SECTION 2: ROCK BACK RECOVER, 1/2 TURN SHUFFLE, ROCK BACK RECOVER, 1/2 TURN SHUFFLE
+1 2 Rock right back, recover on left
+3&4 Shuffle right, left, right with 1/2 turn left (6:00)
+5 6 Rock left back, recover on right
+7&8 Shuffle left, right, left with 1/2 turn right (12:00)
+(Section 2 non-turning option: rock back right, recover left, shuffle fwd RLR, rock fwd left, recover right, shuffle back LRL)
+
+SECTION 3: STEP BACK, HOOK, SHUFFLE FWD, SKATE, SKATE, ROCK FWD, RECOVER
+1 2 Step back on right, hook left in front of right
+3&4 Shuffle fwd left, right, left
+5 6 Skate right, skate left
+7 8 Rock forward right, recover left (12:00) Note: Make 1/4 turn right to start the dance on your new wall at 3:00
+
+REPEAT`;
+
+const DEFAULT_URL = "https://www.copperknob.co.uk/stepsheets/LRV9X25/choosin-texas";
+
+// ---------------------------------------------------------------------------
+// Timeline: absolute keyframes for every wall, built from parsed events.
+// ---------------------------------------------------------------------------
+
+const SCALE = 50;           // px per floor unit
+const MOVE_WINDOW = 0.45;   // beats a foot spends traveling before it lands
+const TRAIL_MIN_DIST = 0.9; // units a step must travel to earn a path line
+const CAM_DEADZONE = 1.0;   // units the dancer can drift before the camera follows
+
+let dance = null;
+let WALL_BEATS = 8, TOTAL_BEATS = 8;
+let kf = { L: [], R: [] };
+let thetaKF = [];
+let weightKF = [];
+
+function buildTimeline() {
+  kf = { L: [], R: [] };
+  thetaKF = [];
+  weightKF = [];
+  let theta = 0;
+  const feet = { L: { x: -0.45, y: 0, a: 0 }, R: { x: 0.45, y: 0, a: 0 } };
+  kf.L.push({ t: -1, ...feet.L, lifted: false });
+  kf.R.push({ t: -1, ...feet.R, lifted: false });
+  thetaKF.push({ t: -1, theta: 0 });
+  weightKF.push({ t: -1, foot: "L" });
+
+  for (let wall = 0; wall < dance.walls; wall++) {
+    for (const ev of dance.events) {
+      const t = wall * WALL_BEATS + ev.beat;
+      let turn = ev.turn || 0;
+      if (ev.beat === dance.events[0].beat && wall > 0 && ev === dance.events[0]) turn += dance.wallTurn;
+      if (turn) {
+        theta += turn;
+        thetaKF.push({ t, theta });
+        // feet swivel with the body: pivot any foot that is not stepping now
+        for (const f of ["L", "R"]) {
+          if (f === ev.foot) continue;
+          const curF = feet[f];
+          const last = kf[f][kf[f].length - 1];
+          feet[f] = { ...curF, a: theta };
+          kf[f].push({ t, x: curF.x, y: curF.y, a: theta, lifted: last.lifted });
+        }
+      }
+      if (ev.foot) {
+        const o = feet[other(ev.foot)];
+        const th = theta * Math.PI / 180;
+        const x = o.x + ev.dx * Math.cos(th) + ev.dy * Math.sin(th);
+        const y = o.y - ev.dx * Math.sin(th) + ev.dy * Math.cos(th);
+        const a = theta + (ev.aOff || 0);
+        feet[ev.foot] = { x, y, a };
+        kf[ev.foot].push({ t, x, y, a, lifted: !!ev.lifted });
+        if (!ev.lifted) weightKF.push({ t, foot: ev.foot });
+      }
+      if (ev.weight) weightKF.push({ t, foot: ev.weight });
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Interpolation
+// ---------------------------------------------------------------------------
+
+function findIdx(arr, t) {
+  let lo = 0, hi = arr.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (arr[mid].t <= t) lo = mid; else hi = mid - 1;
+  }
+  return lo;
+}
+
+function ease(s) { return s * s * (3 - 2 * s); }
+
+function lerpAngle(a, b, s) {
+  let d = (b - a) % 360;
+  if (d > 180) d -= 360;
+  if (d < -180) d += 360;
+  return a + d * s;
+}
+
+function footState(foot, t) {
+  const arr = kf[foot];
+  const i = findIdx(arr, t);
+  const prev = arr[i];
+  const next = arr[i + 1];
+  const base = { x: prev.x, y: prev.y, a: prev.a, lift: prev.lifted ? 1 : 0 };
+  if (!next) return base;
+  const win = Math.min(MOVE_WINDOW, (next.t - prev.t) * 0.9);
+  const start = next.t - win;
+  if (t < start) return base;
+  const s = ease(Math.min(1, (t - start) / win));
+  const prevLift = prev.lifted ? 1 : 0, nextLift = next.lifted ? 1 : 0;
+  return {
+    x: prev.x + (next.x - prev.x) * s,
+    y: prev.y + (next.y - prev.y) * s,
+    a: lerpAngle(prev.a, next.a, s),
+    lift: Math.max(Math.sin(Math.PI * s), prevLift + (nextLift - prevLift) * s)
+  };
+}
+
+function thetaAt(t) {
+  const i = findIdx(thetaKF, t);
+  const prev = thetaKF[i];
+  const next = thetaKF[i + 1];
+  if (!next) return prev.theta;
+  const win = Math.min(MOVE_WINDOW, (next.t - prev.t) * 0.9);
+  const start = next.t - win;
+  if (t < start) return prev.theta;
+  const s = ease(Math.min(1, (t - start) / win));
+  return prev.theta + (next.theta - prev.theta) * s;
+}
+
+function weightAt(t) {
+  return weightKF[findIdx(weightKF, t)].foot;
+}
+
+function eventAt(t) {
+  const beat = ((t % WALL_BEATS) + WALL_BEATS) % WALL_BEATS;
+  let cur = dance.events[0];
+  for (const ev of dance.events) {
+    if (ev.beat <= beat + 1e-6) cur = ev; else break;
+  }
+  return cur;
+}
+
+function sectionAt(localBeat) {
+  let cur = dance.sections[0];
+  for (const s of dance.sections) {
+    if (s.startBeat <= localBeat + 1e-6) cur = s; else break;
+  }
+  return cur;
+}
+
+// ---------------------------------------------------------------------------
+// SVG setup
+// ---------------------------------------------------------------------------
+
+const SOLE_PATH = "M0,-25 C9,-25 12.5,-16 11.5,-6 C10.8,1 11.5,7 10.5,15 C9.5,23 4,26 0,26 C-4,26 -8.5,23 -8.5,15 C-8.5,7 -8,1 -8.5,-6 C-9.5,-16 -7,-25 0,-25 Z";
+
+function makeFoot(id, color, mirror, label) {
+  const g = document.getElementById(id);
+  g.innerHTML =
+    '<g transform="scale(' + (mirror ? -1 : 1) + ',1)">' +
+    '<path d="' + SOLE_PATH + '" fill="' + color + '" stroke="#0f1117" stroke-width="1.5"/>' +
+    '</g>' +
+    '<text y="5" font-size="13" font-weight="700" fill="#12131a" text-anchor="middle">' + label + '</text>';
+  return g;
+}
+
+const css = getComputedStyle(document.documentElement);
+const elFootL = makeFoot("footL", css.getPropertyValue("--left").trim(), true, "L");
+const elFootR = makeFoot("footR", css.getPropertyValue("--right").trim(), false, "R");
+const elShadowL = document.getElementById("shadowL");
+const elShadowR = document.getElementById("shadowR");
+const elTrailL = document.getElementById("trailL");
+const elTrailR = document.getElementById("trailR");
+const elDotL = document.getElementById("dotL");
+const elDotR = document.getElementById("dotR");
+const elTurnArc = document.getElementById("turn-arc");
+const elTurnArrow = document.getElementById("turn-arrow");
+const elTurnLabel = document.getElementById("turn-label");
+const elGlow = document.getElementById("glow");
+const elWorld = document.getElementById("world");
+const elCompassLabels = document.getElementById("compass-labels");
+const elCompassArrow = document.getElementById("compass-arrow");
+const elWallLabel = document.getElementById("wall-label");
+
+const VIEW_CX = 260, VIEW_CY = 215;
+
+// ---------------------------------------------------------------------------
+// Playback state
+// ---------------------------------------------------------------------------
+
+const state = {
+  t: 0,
+  playing: false,
+  bpm: 96,
+  follow: true,
+  ticks: false,
+  loopSection: false,
+  loopFrom: 0,
+  loopLen: 8,
+  cam: { x: 0, y: 0 },
+  viewTheta: 0,
+  lastBeatInt: -1
+};
+
+let audioCtx = null;
+function tick(accent) {
+  if (!state.ticks || !audioCtx) return;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.frequency.value = accent ? 1500 : 1000;
+  gain.gain.setValueAtTime(accent ? 0.25 : 0.15, audioCtx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.05);
+  osc.connect(gain).connect(audioCtx.destination);
+  osc.start();
+  osc.stop(audioCtx.currentTime + 0.06);
+}
+
+// ---------------------------------------------------------------------------
+// Render
+// ---------------------------------------------------------------------------
+
+function clockLabel(theta) {
+  const norm = ((Math.round(theta) % 360) + 360) % 360;
+  if (norm % 90 !== 0) return null;
+  return { 0: "12:00", 90: "3:00", 180: "6:00", 270: "9:00" }[norm];
+}
+let lastClock = "12:00";
+
+function render() {
+  const t = state.t;
+  const L = footState("L", t);
+  const R = footState("R", t);
+  const theta = thetaAt(t);
+  const midX = (L.x + R.x) / 2, midY = (L.y + R.y) / 2;
+
+  // loose camera: only follows once the dancer leaves a deadzone, and slowly,
+  // so steps visibly travel across the floor
+  const errX = midX - state.cam.x, errY = midY - state.cam.y;
+  const dist = Math.hypot(errX, errY);
+  if (dist > CAM_DEADZONE) {
+    const pull = (dist - CAM_DEADZONE) / dist * 0.06;
+    state.cam.x += errX * pull;
+    state.cam.y += errY * pull;
+  }
+  state.viewTheta = lerpAngle(state.viewTheta, theta, 0.06);
+  const viewRot = state.follow ? -state.viewTheta : 0;
+
+  elWorld.setAttribute("transform",
+    "translate(" + VIEW_CX + "," + VIEW_CY + ") rotate(" + viewRot + ") " +
+    "translate(" + (-state.cam.x * SCALE) + "," + (state.cam.y * SCALE) + ")");
+
+  renderTrail("L", elTrailL, elDotL, t);
+  renderTrail("R", elTrailR, elDotR, t);
+  renderTurnArc(t, midX, midY, viewRot);
+
+  placeFoot(elFootL, elShadowL, L);
+  placeFoot(elFootR, elShadowR, R);
+
+  const w = weightAt(t);
+  const wf = w === "L" ? L : R;
+  elGlow.setAttribute("cx", wf.x * SCALE);
+  elGlow.setAttribute("cy", -wf.y * SCALE);
+
+  const dialRot = state.follow ? -state.viewTheta : 0;
+  elCompassLabels.setAttribute("transform", "rotate(" + dialRot + ")");
+  elCompassArrow.setAttribute("transform", "rotate(" + (state.follow ? 0 : state.viewTheta) + ")");
+  for (const txt of elCompassLabels.children) {
+    txt.setAttribute("transform",
+      "rotate(" + (-dialRot) + " " + txt.getAttribute("x") + " " + (txt.getAttribute("y") - 3) + ")");
+  }
+
+  const wall = Math.floor(t / WALL_BEATS) % dance.walls;
+  const cl = clockLabel(thetaKF[findIdx(thetaKF, t)].theta);
+  if (cl) lastClock = cl;
+  elWallLabel.textContent = "Wall " + (wall + 1) + " of " + dance.walls + " · facing " + lastClock;
+
+  renderNow(t);
+  renderProgress(t);
+  renderSheet(t);
+}
+
+function placeFoot(el, shadow, s) {
+  const sx = s.x * SCALE, sy = -s.y * SCALE;
+  const scale = 1 + 0.15 * s.lift;
+  el.setAttribute("transform", "translate(" + sx + "," + sy + ") rotate(" + s.a + ") scale(" + scale + ")");
+  shadow.setAttribute("cx", sx + 4 * s.lift);
+  shadow.setAttribute("cy", sy + 8 * s.lift);
+  shadow.setAttribute("transform", "rotate(" + s.a + " " + sx + " " + sy + ")");
+  shadow.setAttribute("opacity", 0.15 + 0.25 * s.lift);
+  shadow.setAttribute("rx", 14 + 6 * s.lift);
+  shadow.setAttribute("ry", 24 + 4 * s.lift);
+}
+
+// Dashed path from where a traveling step started to where it lands. Appears
+// just before the foot moves (a preview), stays while it moves, fades after.
+function renderTrail(foot, elLine, elDot, t) {
+  const arr = kf[foot];
+  const i = findIdx(arr, t);
+  const cur = arr[i];
+  const next = arr[i + 1];
+  let from = null, to = null, alpha = 0;
+
+  if (next && !next.lifted) {
+    const win = Math.min(MOVE_WINDOW, (next.t - cur.t) * 0.9);
+    const start = next.t - win;
+    const preview = start - 0.4;
+    if (t >= preview && Math.hypot(next.x - cur.x, next.y - cur.y) > TRAIL_MIN_DIST) {
+      from = cur; to = next;
+      alpha = t < start ? 0.35 * (t - preview) / (start - preview) + 0.15 : 0.7;
+    }
+  }
+  if (!from && i >= 1 && !cur.lifted) {
+    const age = t - cur.t;
+    const prev = arr[i - 1];
+    if (age < 1.4 && Math.hypot(cur.x - prev.x, cur.y - prev.y) > TRAIL_MIN_DIST) {
+      from = prev; to = cur;
+      alpha = (1 - age / 1.4) * 0.7;
+    }
+  }
+
+  if (!from) {
+    elLine.setAttribute("opacity", 0);
+    elDot.setAttribute("opacity", 0);
+    return;
+  }
+  elLine.setAttribute("x1", from.x * SCALE);
+  elLine.setAttribute("y1", -from.y * SCALE);
+  elLine.setAttribute("x2", to.x * SCALE);
+  elLine.setAttribute("y2", -to.y * SCALE);
+  elLine.setAttribute("opacity", alpha);
+  elDot.setAttribute("cx", from.x * SCALE);
+  elDot.setAttribute("cy", -from.y * SCALE);
+  elDot.setAttribute("opacity", alpha);
+}
+
+// Curved arrow around the dancer while facing changes over the last 1.5 beats.
+function renderTurnArc(t, midX, midY, viewRot) {
+  const th0 = thetaAt(t - 1.5);
+  const th1 = thetaAt(t);
+  const dlt = th1 - th0;
+  if (Math.abs(dlt) < 12) {
+    elTurnArc.setAttribute("opacity", 0);
+    elTurnArrow.setAttribute("opacity", 0);
+    elTurnLabel.setAttribute("opacity", 0);
+    return;
+  }
+  const cx = midX * SCALE, cy = -midY * SCALE;
+  const r = 1.55 * SCALE;
+  const pt = a => {
+    const rad = a * Math.PI / 180;
+    return [cx + r * Math.sin(rad), cy - r * Math.cos(rad)];
+  };
+  const [x0, y0] = pt(th0);
+  const [x1, y1] = pt(th1);
+  const sweep = dlt > 0 ? 1 : 0;
+  const large = Math.abs(dlt) > 180 ? 1 : 0;
+  elTurnArc.setAttribute("d",
+    "M" + x0 + "," + y0 + " A" + r + "," + r + " 0 " + large + "," + sweep + " " + x1 + "," + y1);
+
+  const rad1 = th1 * Math.PI / 180;
+  let vx = Math.cos(rad1), vy = Math.sin(rad1);
+  if (dlt < 0) { vx = -vx; vy = -vy; }
+  const px = -vy, py = vx;
+  elTurnArrow.setAttribute("d",
+    "M" + (x1 + vx * 13) + "," + (y1 + vy * 13) +
+    " L" + (x1 + px * 5.5) + "," + (y1 + py * 5.5) +
+    " L" + (x1 - px * 5.5) + "," + (y1 - py * 5.5) + " Z");
+
+  const alpha = Math.min(0.9, Math.abs(dlt) / 90);
+  elTurnArc.setAttribute("opacity", alpha);
+  elTurnArrow.setAttribute("opacity", alpha);
+
+  const near = [[90, "¼"], [180, "½"], [270, "¾"], [360, "full"]]
+    .find(([deg]) => Math.abs(Math.abs(dlt) - deg) < 30);
+  if (near && Math.abs(dlt) >= 60) {
+    const [lx, ly] = pt(lerpAngle(th0, th1, 0.5));
+    const ox = lx - cx, oy = ly - cy;
+    const om = Math.hypot(ox, oy) || 1;
+    const tx = cx + ox / om * (r + 16), ty = cy + oy / om * (r + 16) + 5;
+    elTurnLabel.setAttribute("x", tx);
+    elTurnLabel.setAttribute("y", ty);
+    // keep the label upright while the floor rotates in follow mode
+    elTurnLabel.setAttribute("transform", "rotate(" + (-viewRot) + " " + tx + " " + ty + ")");
+    elTurnLabel.textContent = near[1];
+    elTurnLabel.setAttribute("opacity", alpha);
+  } else {
+    elTurnLabel.setAttribute("opacity", 0);
+  }
+}
+
+const elNowCount = document.getElementById("now-count");
+const elNowSection = document.getElementById("now-section");
+const elNowStep = document.getElementById("now-step");
+
+function renderNow(t) {
+  const ev = eventAt(t);
+  const local = ((t % WALL_BEATS) + WALL_BEATS) % WALL_BEATS;
+  elNowCount.textContent = ev.c;
+  elNowSection.textContent = sectionAt(local).name;
+  elNowStep.textContent = ev.txt;
+}
+
+// ---------------------------------------------------------------------------
+// Progress bar and sheet panel (rebuilt per dance)
+// ---------------------------------------------------------------------------
+
+const elProgress = document.getElementById("progress");
+let cells = [];
+
+function buildProgress() {
+  elProgress.innerHTML = "";
+  cells = [];
+  const secStarts = new Set(dance.sections.map(s => s.startBeat));
+  for (let i = 0; i < WALL_BEATS; i++) {
+    const cell = document.createElement("div");
+    cell.className = "cell" + (i > 0 && secStarts.has(i) ? " sec-gap" : "");
+    cell.dataset.base = cell.className;
+    const beat = i;
+    cell.addEventListener("click", () => seek(Math.floor(state.t / WALL_BEATS) * WALL_BEATS + beat));
+    elProgress.appendChild(cell);
+    cells.push(cell);
+  }
+}
+
+function renderProgress(t) {
+  const beat = Math.floor(((t % WALL_BEATS) + WALL_BEATS) % WALL_BEATS);
+  for (let i = 0; i < cells.length; i++) {
+    cells[i].className = cells[i].dataset.base +
+      (i < beat ? " done" : i === beat ? " active" : "");
+  }
+}
+
+const elSheetLines = document.getElementById("sheet-lines");
+let lineEls = [];
+
+function buildSheet() {
+  document.getElementById("dance-title").textContent = dance.title;
+  const bits = [];
+  if (dance.meta.choreo) bits.push(dance.meta.choreo);
+  bits.push(WALL_BEATS + " counts");
+  bits.push(dance.walls + (dance.walls === 1 ? " wall" : " walls"));
+  if (dance.meta.level) bits.push(dance.meta.level);
+  if (dance.meta.music) bits.push(dance.meta.music);
+  let html = bits.join(" · ");
+  if (dance.url) html += ' · <a href="' + dance.url + '" target="_blank" rel="noopener">stepsheet</a>';
+  document.getElementById("dance-meta").innerHTML = html;
+  document.getElementById("sheet-intro").textContent = dance.intro || "";
+
+  elSheetLines.innerHTML = "";
+  lineEls = [];
+  let lastSec = -1;
+  for (const line of dance.lines) {
+    if (line.sec !== lastSec) {
+      const h = document.createElement("div");
+      h.className = "sec-title";
+      h.textContent = dance.sections[line.sec].name;
+      elSheetLines.appendChild(h);
+      lastSec = line.sec;
+    }
+    const div = document.createElement("div");
+    div.className = "line";
+    div.innerHTML = '<span class="counts">' + line.counts + '</span><span>' + line.text + '</span>';
+    div.addEventListener("click", () => seek(Math.floor(state.t / WALL_BEATS) * WALL_BEATS + line.b0));
+    elSheetLines.appendChild(div);
+    lineEls.push({ el: div, line });
+  }
+}
+
+function renderSheet(t) {
+  const beat = ((t % WALL_BEATS) + WALL_BEATS) % WALL_BEATS;
+  for (const { el, line } of lineEls) {
+    el.classList.toggle("active", beat >= line.b0 && beat < line.b1 + 1);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Dance loading
+// ---------------------------------------------------------------------------
+
+const elWarnings = document.getElementById("warnings");
+
+function showWarnings(list) {
+  elWarnings.innerHTML = "";
+  for (const w of list) {
+    const div = document.createElement("div");
+    div.textContent = "⚠ " + w;
+    elWarnings.appendChild(div);
+  }
+}
+
+function loadDance(parsed, url) {
+  dance = parsed;
+  dance.url = url || null;
+  WALL_BEATS = dance.wallBeats;
+  TOTAL_BEATS = WALL_BEATS * dance.walls;
+  buildTimeline();
+  buildProgress();
+  buildSheet();
+  lastClock = "12:00";
+  state.loopSection = false;
+  document.getElementById("btn-loop-sec").classList.remove("toggled");
+  seek(0);
+  setPlaying(false);
+}
+
+// ---------------------------------------------------------------------------
+// Playback loop and controls
+// ---------------------------------------------------------------------------
+
+function seek(t) {
+  state.t = ((t % TOTAL_BEATS) + TOTAL_BEATS) % TOTAL_BEATS;
+  state.lastBeatInt = Math.floor(state.t);
+  const local = ((state.t % WALL_BEATS) + WALL_BEATS) % WALL_BEATS;
+  const sec = sectionAt(local);
+  state.loopFrom = Math.floor(state.t / WALL_BEATS) * WALL_BEATS + sec.startBeat;
+  state.loopLen = sec.beats;
+  reanchor();
+  const L = footState("L", state.t), R = footState("R", state.t);
+  state.cam.x = (L.x + R.x) / 2;
+  state.cam.y = (L.y + R.y) / 2;
+  state.viewTheta = thetaAt(state.t);
+  render();
+}
+
+// Playback time is anchored to the wall clock, not frame deltas, so it stays
+// accurate even when the browser throttles animation frames.
+let anchorMs = null;
+let anchorT = 0;
+
+function reanchor() {
+  anchorMs = performance.now();
+  anchorT = state.t;
+}
+
+function frame() {
+  if (state.playing) {
+    state.t = anchorT + (performance.now() - anchorMs) / 1000 * state.bpm / 60;
+
+    if (state.loopSection && state.t >= state.loopFrom + state.loopLen) {
+      seek(state.loopFrom + (state.t - state.loopFrom) % state.loopLen);
+    }
+    if (state.t >= TOTAL_BEATS) {
+      state.lastBeatInt = -1;
+      seek(state.t % TOTAL_BEATS);
+    }
+    const beatInt = Math.floor(state.t);
+    if (beatInt !== state.lastBeatInt) {
+      state.lastBeatInt = beatInt;
+      tick(beatInt % 8 === 0);
+    }
+  }
+  render();
+  requestAnimationFrame(frame);
+}
+
+const btnPlay = document.getElementById("btn-play");
+function setPlaying(p) {
+  state.playing = p;
+  if (p) reanchor();
+  btnPlay.textContent = p ? "Pause" : "Play";
+}
+btnPlay.addEventListener("click", () => setPlaying(!state.playing));
+
+document.getElementById("btn-restart").addEventListener("click", () => seek(0));
+
+function stepEvent(dir) {
+  setPlaying(false);
+  const times = [];
+  for (let wall = 0; wall < dance.walls; wall++)
+    for (const ev of dance.events) times.push(wall * WALL_BEATS + ev.beat);
+  const t = state.t;
+  if (dir > 0) {
+    const next = times.find(x => x > t + 1e-4);
+    seek(next !== undefined ? next : 0);
+  } else {
+    const prevs = times.filter(x => x < t - 1e-4);
+    seek(prevs.length ? prevs[prevs.length - 1] : times[times.length - 1]);
+  }
+}
+document.getElementById("btn-prev").addEventListener("click", () => stepEvent(-1));
+document.getElementById("btn-next").addEventListener("click", () => stepEvent(1));
+
+function bindToggle(id, key, cb) {
+  const btn = document.getElementById(id);
+  btn.addEventListener("click", () => {
+    state[key] = !state[key];
+    btn.classList.toggle("toggled", state[key]);
+    if (cb) cb();
+  });
+  btn.classList.toggle("toggled", state[key]);
+}
+bindToggle("btn-loop-sec", "loopSection", () => {
+  const local = ((state.t % WALL_BEATS) + WALL_BEATS) % WALL_BEATS;
+  const sec = sectionAt(local);
+  state.loopFrom = Math.floor(state.t / WALL_BEATS) * WALL_BEATS + sec.startBeat;
+  state.loopLen = sec.beats;
+});
+bindToggle("btn-follow", "follow");
+bindToggle("btn-tick", "ticks", () => {
+  if (state.ticks) {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === "suspended") audioCtx.resume();
+  }
+});
+
+const bpmInput = document.getElementById("bpm");
+const bpmVal = document.getElementById("bpm-val");
+bpmInput.addEventListener("input", () => {
+  state.bpm = +bpmInput.value;
+  bpmVal.textContent = state.bpm + " bpm";
+  reanchor();
+});
+
+document.addEventListener("keydown", (e) => {
+  if (e.target.tagName === "TEXTAREA") return;
+  if (e.code === "Space") { e.preventDefault(); setPlaying(!state.playing); }
+  else if (e.code === "ArrowRight") { e.preventDefault(); stepEvent(1); }
+  else if (e.code === "ArrowLeft") { e.preventDefault(); stepEvent(-1); }
+});
+
+const sheetInput = document.getElementById("sheet-input");
+sheetInput.value = RAW_SHEET;
+document.getElementById("btn-load").addEventListener("click", () => {
+  const parsed = parseStepsheet(sheetInput.value);
+  showWarnings(parsed.warnings);
+  if (parsed.ok) {
+    const isDefault = sheetInput.value === RAW_SHEET;
+    loadDance(parsed, isDefault ? DEFAULT_URL : null);
+  }
+});
+
+// boot with the default dance, parsed from its raw stepsheet
+{
+  const parsed = parseStepsheet(RAW_SHEET);
+  showWarnings(parsed.warnings);
+  loadDance(parsed, DEFAULT_URL);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
