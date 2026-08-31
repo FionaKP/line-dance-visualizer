@@ -1590,7 +1590,7 @@ function frame() {
       state.playing = playing;
       btnPlay.textContent = playing ? "Pause" : "Play";
     }
-    const tb = (ytPlayer.getCurrentTime() - music.start) * state.bpm / 60;
+    const tb = (ytPlayer.getCurrentTime() - music.start) * (music.exactBpm || state.bpm) / 60;
     state.introCountdown = tb < 0 ? Math.ceil(-tb) : null;
     state.t = tb < 0 ? 0 : tb % TOTAL_BEATS;
     const beatInt = Math.floor(tb);
@@ -1680,6 +1680,7 @@ const bpmVal = document.getElementById("bpm-val");
 bpmInput.addEventListener("input", () => {
   state.bpm = +bpmInput.value;
   bpmVal.textContent = state.bpm + " bpm";
+  music.exactBpm = null;
   reanchor();
   if (music.videoId) saveMusicPrefs();
 });
@@ -1693,7 +1694,7 @@ document.addEventListener("keydown", (e) => {
 
 // --- Music: YouTube search, lyric-cue alignment, and playback sync --------
 
-const music = { videoId: null, start: 0, synced: false };
+const music = { videoId: null, start: 0, synced: false, exactBpm: null, analysis: null };
 let ytPlayer = null;
 let ytApiLoading = false;
 const elMusicStatus = document.getElementById("music-status");
@@ -1706,7 +1707,7 @@ function musicKey() { return "music:" + (dance.url || dance.title); }
 function saveMusicPrefs() {
   try {
     localStorage.setItem(musicKey(), JSON.stringify({
-      videoId: music.videoId, start: music.start, bpm: state.bpm
+      videoId: music.videoId, start: music.start, bpm: state.bpm, exactBpm: music.exactBpm
     }));
   } catch (e) { /* private mode */ }
 }
@@ -1714,6 +1715,8 @@ function saveMusicPrefs() {
 function loadMusicPrefs() {
   music.videoId = null;
   music.start = 0;
+  music.exactBpm = null;
+  music.analysis = null;
   setSynced(false);
   document.getElementById("player-wrap").style.display = "none";
   elMusicResults.innerHTML = "";
@@ -1723,6 +1726,7 @@ function loadMusicPrefs() {
     const saved = JSON.parse(localStorage.getItem(musicKey()));
     if (saved && saved.videoId) {
       music.start = saved.start || 0;
+      music.exactBpm = saved.exactBpm || null;
       elStartTime.value = music.start;
       if (saved.bpm) {
         state.bpm = saved.bpm;
@@ -1784,9 +1788,16 @@ async function searchMusic() {
       div.innerHTML = '<div class="r-title"><b></b></div><div class="r-sub"></div>';
       div.querySelector("b").textContent = res.title;
       div.querySelector(".r-sub").textContent = res.channel + (res.length ? " · " + res.length : "");
-      div.addEventListener("click", () => {
+      div.addEventListener("click", async () => {
         selectVideo(res.videoId, res.title);
-        musicStatus("Selected: " + res.title);
+        try {
+          const a = await analyzeAudio(res.videoId, musicStatus);
+          music.analysis = a;
+          musicStatus(applyMusicAnalysis(a, cueInfo(), null) +
+                      " — press From lyrics to refine with captions.");
+        } catch (err) {
+          musicStatus("Selected: " + res.title + ". Audio analysis failed: " + err.message);
+        }
       });
       elMusicResults.appendChild(div);
     }
@@ -1795,6 +1806,165 @@ async function searchMusic() {
     musicStatus("Music search failed: " + err.message);
     return [];
   }
+}
+
+// --- audio analysis: tempo and beat grid measured from the actual song ----
+
+async function analyzeAudio(videoId, onStatus) {
+  onStatus("Downloading audio…");
+  const resp = await fetch("/api/audio?v=" + videoId);
+  if (!resp.ok) {
+    let msg = "audio unavailable";
+    try { msg = (await resp.json()).error || msg; } catch (e) { /* not json */ }
+    throw new Error(msg);
+  }
+  const raw = await resp.arrayBuffer();
+  onStatus("Decoding audio…");
+  const AC = window.AudioContext || window.webkitAudioContext;
+  const dctx = new AC();
+  let audio;
+  try { audio = await dctx.decodeAudioData(raw); } finally { dctx.close(); }
+  onStatus("Finding the beat…");
+  // keep only the low end, where the kick and bass carry the pulse
+  const off = new OfflineAudioContext(1, audio.length, audio.sampleRate);
+  const src = off.createBufferSource();
+  src.buffer = audio;
+  const lp = off.createBiquadFilter();
+  lp.type = "lowpass";
+  lp.frequency.value = 150;
+  lp.Q.value = 1;
+  src.connect(lp);
+  lp.connect(off.destination);
+  src.start();
+  const rendered = await off.startRendering();
+  return gridFromWave(rendered.getChannelData(0), rendered.sampleRate);
+}
+
+function gridFromWave(wave, sr) {
+  const hopSec = 0.005;
+  const hop = Math.round(sr * hopSec);
+  const n = Math.floor(wave.length / hop);
+  const env = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    let s = 0;
+    const base = i * hop;
+    for (let j = 0; j < hop; j++) s += wave[base + j] * wave[base + j];
+    env[i] = Math.sqrt(s / hop);
+  }
+  let peak = 0;
+  for (let i = 0; i < n; i++) peak = Math.max(peak, env[i]);
+  if (!peak) throw new Error("silent audio");
+
+  // where the music actually starts: sustained energy above the noise floor
+  let startIdx = 0;
+  const thr = peak * 0.08;
+  for (let i = 0; i < n - 40; i++) {
+    let ok = 0;
+    for (let j = 0; j < 40; j++) if (env[i + j] > thr) ok++;
+    if (ok > 25) { startIdx = i; break; }
+  }
+
+  const onset = new Float32Array(n);
+  for (let i = 1; i < n; i++) onset[i] = Math.max(0, env[i] - env[i - 1]);
+
+  // tempo: autocorrelation of onset strength, 50 to 200 bpm
+  const a0 = startIdx;
+  const a1 = Math.min(n, startIdx + Math.round(150 / hopSec));
+  const minLag = Math.round(60 / 200 / hopSec);
+  const maxLag = Math.round(60 / 50 / hopSec);
+  const score = new Float32Array(maxLag + 2);
+  let bestLag = minLag;
+  for (let lag = minLag; lag <= maxLag; lag++) {
+    let s = 0, c = 0;
+    for (let i = a0; i + lag < a1; i++) { s += onset[i] * onset[i + lag]; c++; }
+    score[lag] = c ? s / c : 0;
+    if (score[lag] > score[bestLag]) bestLag = lag;
+  }
+  let lagF = bestLag;
+  if (bestLag > minLag && bestLag < maxLag) {
+    const y0 = score[bestLag - 1], y1 = score[bestLag], y2 = score[bestLag + 1];
+    const d = y0 - 2 * y1 + y2;
+    if (d < 0) lagF = bestLag + 0.5 * (y0 - y2) / d;
+  }
+  // sharpen the period using the 8-beat autocorrelation
+  const target8 = lagF * 8;
+  if (target8 * 2 < a1 - a0) {
+    const lo = Math.round(target8 * 0.97), hi = Math.round(target8 * 1.03);
+    let b8 = lo, s8best = -1;
+    for (let lag = lo; lag <= hi; lag++) {
+      let s = 0, c = 0;
+      for (let i = a0; i + lag < a1; i += 2) { s += onset[i] * onset[i + lag]; c++; }
+      s = c ? s / c : 0;
+      if (s > s8best) { s8best = s; b8 = lag; }
+    }
+    lagF = b8 / 8;
+  }
+  let period = lagF * hopSec;
+  let bpm = 60 / period;
+  while (bpm > 145) { bpm /= 2; period *= 2; }
+  while (bpm < 62) { bpm *= 2; period /= 2; }
+
+  // beat phase: fold onset energy modulo the period
+  const periodIdx = period / hopSec;
+  const bins = Math.max(1, Math.round(periodIdx));
+  const fold = new Float32Array(bins);
+  const p1 = Math.min(n, startIdx + Math.round(40 / hopSec));
+  for (let i = startIdx; i < p1; i++) {
+    fold[Math.round((i - startIdx) % periodIdx) % bins] += onset[i];
+  }
+  let bestBin = 0;
+  for (let b = 0; b < bins; b++) if (fold[b] > fold[bestBin]) bestBin = b;
+  const firstBeat = (startIdx + bestBin) * hopSec;
+
+  const result = {
+    bpm: Math.round(bpm * 10) / 10,
+    period,
+    firstBeat: Math.round(firstBeat * 100) / 100,
+    musicStart: Math.round(startIdx * hopSec * 100) / 100
+  };
+  result.beatAt = nb => result.firstBeat + nb * result.period;
+  return result;
+}
+
+// combine the measured beat grid with whatever the stepsheet tells us
+function applyMusicAnalysis(a, cue, cueHit) {
+  let start, how;
+  if (cueHit) {
+    // beat detection can land an octave off; the sheet's intro count says
+    // how many beats should fit before the cue, which settles it
+    if (cue.introCounts) {
+      const implied = (cueHit.time - a.firstBeat) / a.period;
+      const ratio = implied / cue.introCounts;
+      if (ratio > 1.6 && ratio < 2.4 && a.bpm / 2 >= 55) {
+        a.bpm = Math.round(a.bpm / 2 * 10) / 10;
+        a.period *= 2;
+      } else if (ratio > 0.4 && ratio < 0.65 && a.bpm * 2 <= 200) {
+        a.bpm = Math.round(a.bpm * 2 * 10) / 10;
+        a.period /= 2;
+      }
+    }
+    const nb = Math.max(0, Math.round((cueHit.time - a.firstBeat) / a.period));
+    start = a.beatAt(nb);
+    how = "lyric cue “" + cue.word + "” snapped to the beat";
+    if (cue.introCounts && Math.abs(nb - cue.introCounts) > 2) {
+      how += "; the sheet says a " + cue.introCounts + "-count intro but the cue lands on beat " +
+             nb + ", trust your ears";
+    }
+  } else if (cue.introCounts != null) {
+    start = a.beatAt(cue.introCounts);
+    how = cue.introCounts + "-count intro from the first beat";
+  } else {
+    start = a.firstBeat;
+    how = "first detected beat; no intro info in the sheet";
+  }
+  music.exactBpm = a.bpm;
+  state.bpm = Math.max(40, Math.min(140, Math.round(a.bpm)));
+  bpmInput.value = state.bpm;
+  bpmVal.textContent = a.bpm + " bpm";
+  music.start = Math.round(start * 100) / 100;
+  elStartTime.value = music.start;
+  saveMusicPrefs();
+  return a.bpm + " bpm measured from the audio, count 1 at " + music.start + "s (" + how + ")";
 }
 
 // the lyric cue from intros like "Starts after 32 counts (...thought)"
@@ -1853,39 +2023,43 @@ async function alignFromLyrics() {
       musicStatus("The cue word “" + cue.word + "” is not in this video's captions; try another video or set start manually.");
       return;
     }
-    musicStatus("Cue “" + cue.word + "” at " + Math.round(hit.time) + "s: " + applyCueHit(hit, cue));
+    if (music.analysis) {
+      musicStatus("Cue found: " + applyMusicAnalysis(music.analysis, cue, hit));
+    } else {
+      musicStatus("Cue “" + cue.word + "” at " + Math.round(hit.time) + "s: " + applyCueHit(hit, cue));
+    }
   } catch (err) {
     musicStatus("Caption lookup failed: " + err.message);
   }
 }
 
-// one-click agent: search, find a captioned video, line it up from the cue
+// one-click agent: search, prefer a captioned video, measure tempo and the
+// beat grid from its audio, then line up count 1 from cue or intro counts
 async function autoMatchMusic() {
   const results = await searchMusic();
   if (!results.length) return;
   const cue = cueInfo();
-  for (const res of results.slice(0, 5)) {
-    musicStatus("Checking captions: " + res.title.slice(0, 50) + "…");
-    try {
-      const r = await fetch("/api/transcript?v=" + res.videoId);
-      const data = await r.json();
-      if (data.error) continue;
-      selectVideo(res.videoId, res.title);
-      if (cue.word) {
-        const hit = findCueInTranscript(data.segments, cue.word);
-        if (hit) {
-          musicStatus("Matched “" + res.title.slice(0, 45) + "”: " + applyCueHit(hit, cue));
-          return;
-        }
-        musicStatus("Selected " + res.title.slice(0, 45) + " (has captions, but the cue “" +
-                    cue.word + "” was not found; set start manually).");
-        return;
-      }
-      musicStatus("Selected " + res.title.slice(0, 45) + " (no lyric cue in the sheet; use Tap tempo and Set to now).");
-      return;
-    } catch (err) { /* try next */ }
+  let chosen = null, segments = null;
+  if (cue.word) {
+    for (const res of results.slice(0, 5)) {
+      musicStatus("Checking captions: " + res.title.slice(0, 45) + "…");
+      try {
+        const d = await (await fetch("/api/transcript?v=" + res.videoId)).json();
+        if (d.segments) { chosen = res; segments = d.segments; break; }
+      } catch (err) { /* try next */ }
+    }
   }
-  musicStatus("No captioned videos in the top results; pick one manually.");
+  if (!chosen) chosen = results[0];
+  selectVideo(chosen.videoId, chosen.title);
+  const cueHit = segments && cue.word ? findCueInTranscript(segments, cue.word) : null;
+  try {
+    const a = await analyzeAudio(chosen.videoId, musicStatus);
+    music.analysis = a;
+    musicStatus("Matched “" + chosen.title.slice(0, 40) + "”: " + applyMusicAnalysis(a, cue, cueHit));
+  } catch (err) {
+    if (cueHit) musicStatus("Audio analysis failed (" + err.message + "), fell back to captions: " + applyCueHit(cueHit, cue));
+    else musicStatus("Audio analysis failed: " + err.message + ". Use Tap tempo and Set to now.");
+  }
 }
 
 function setSynced(on) {

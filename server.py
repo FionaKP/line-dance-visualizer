@@ -176,15 +176,63 @@ ANDROID_CLIENT = {
 }
 
 
-def fetch_transcript(video_id):
-    # the web watch page hides caption URLs behind proof-of-origin tokens;
-    # the Android innertube client still hands them out directly
+def innertube_player(video_id):
     body = json.dumps({"context": {"client": ANDROID_CLIENT}, "videoId": video_id}).encode()
     req = urllib.request.Request(
         "https://www.youtube.com/youtubei/v1/player?prettyPrint=false", data=body,
         headers={"Content-Type": "application/json", "User-Agent": ANDROID_CLIENT["userAgent"]})
     with urllib.request.urlopen(req, timeout=20) as r:
-        data = json.load(r)
+        return json.load(r)
+
+
+def _pick_audio_format(video_id):
+    data = innertube_player(video_id)
+    fmts = data.get("streamingData", {}).get("adaptiveFormats", [])
+    audio = [f for f in fmts if f.get("mimeType", "").startswith("audio/") and "url" in f]
+    if not audio:
+        return None
+    mp4 = [f for f in audio if "mp4" in f.get("mimeType", "")]
+    return min(mp4 or audio, key=lambda f: f.get("bitrate", 1 << 30))
+
+
+def fetch_audio(video_id):
+    """Return (bytes, mime) for the start of a video's smallest audio stream.
+
+    Un-tokened stream URLs allow only ~300KB total, so grab the first ~280KB
+    in small ranged chunks. At the low bitrates we pick, that is more than a
+    minute of audio, enough for tempo and start detection.
+    """
+    best = _pick_audio_format(video_id)
+    if not best:
+        return None, "No audio stream available for this video."
+    length = int(best.get("contentLength", 0))
+    mime = best.get("mimeType", "audio/mp4").split(";")[0]
+    if not length:
+        return None, "Audio stream is missing a length."
+    target = min(length, 280_000)
+    blob = bytearray()
+    while len(blob) < target:
+        end = min(len(blob) + 99_999, target - 1)
+        req = urllib.request.Request(best["url"], headers={
+            "User-Agent": ANDROID_CLIENT["userAgent"],
+            "Range": "bytes=%d-%d" % (len(blob), end)})
+        try:
+            with urllib.request.urlopen(req, timeout=60) as r:
+                data = r.read()
+        except urllib.error.HTTPError as e:
+            if blob:
+                break  # analyze what we have
+            return None, "Audio download failed: HTTP %d" % e.code
+        if not data:
+            break
+        blob.extend(data)
+    return (bytes(blob), mime), None
+
+
+def fetch_transcript(video_id):
+    # the web watch page hides caption URLs behind proof-of-origin tokens;
+    # the Android innertube client still hands them out directly
+    data = innertube_player(video_id)
     tracks = (data.get("captions", {}).get("playerCaptionsTracklistRenderer", {})
               .get("captionTracks", []))
     if not tracks:
@@ -238,6 +286,23 @@ class Handler(SimpleHTTPRequestHandler):
                 page = fetch("https://www.youtube.com/results?search_query=" +
                              urllib.parse.quote(q))
                 self.send_json({"results": parse_music_results(page)})
+                return
+
+            if parsed.path == "/api/audio":
+                vid = qs.get("v", [""])[0]
+                if not re.match(r"^[\w-]{11}$", vid):
+                    self.send_json({"error": "Invalid video id."}, 400)
+                    return
+                result, err = fetch_audio(vid)
+                if err:
+                    self.send_json({"error": err}, 502)
+                    return
+                blob, mime = result
+                self.send_response(200)
+                self.send_header("Content-Type", mime)
+                self.send_header("Content-Length", str(len(blob)))
+                self.end_headers()
+                self.wfile.write(blob)
                 return
 
             if parsed.path == "/api/transcript":
