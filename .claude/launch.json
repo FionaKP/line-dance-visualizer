@@ -3,7 +3,7 @@
   "configurations": [
     {
       "name": "visualizer",
-      "runtimeExecutable": "python",
+      "runtimeExecutable": "python3",
       "runtimeArgs": ["server.py"],
       "port": 8123
     }

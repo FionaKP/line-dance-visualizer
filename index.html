@@ -663,7 +663,7 @@ function parsePhrase(raw, ctx, warn) {
   const stepLike = /\b(step|walk|stroll|run|stride|hop|scoot)\b/.test(lower);
   const bareFoot = /^(right|left)$/.test(lower);
   if (stepLike || bareFoot || ctx.mode) {
-    if (/\bwalk\b/.test(lower)) ctx.mode = "walk";
+    if (/\b(walk|stroll|run|stride)\b/.test(lower)) ctx.mode = "walk";
     if (ctx.mode === "bump" && bareFoot) {
       out.push({ kind: "hold", txt: cap(p) });
       return out;
@@ -684,9 +684,11 @@ function parsePhrase(raw, ctx, warn) {
     else if (/\bside\b/.test(lower)) kind = "side";
     else if (/\b(forward|fwd)\b/.test(lower)) kind = "fwd";
     else if (/\bback(?:wards?)?\b/.test(lower)) kind = "back";
-    else if (bareFoot && ctx.mode === "walk") kind = "fwd";
+    else if (bareFoot && ctx.mode === "walk") kind = ctx.walkDir || "fwd";
     else if (/^(?:lock )?step (?:on )?(right|left)$/.test(lower)) kind = "place";
+    else if (ctx.mode === "walk") kind = ctx.walkDir || "fwd"; // walks keep traveling
     else { kind = "close"; warn("Guessed 'step together' for: \"" + p + "\""); }
+    if (ctx.mode === "walk" && (kind === "fwd" || kind === "back")) ctx.walkDir = kind;
     const st = push(kind, f);
     if (/\b(hop|scoot)\b/.test(lower)) st.badge = /\bscoot\b/.test(lower) ? "SCOOT" : "HOP";
     return out;
@@ -954,7 +956,7 @@ const DEFAULT_URL = "https://www.copperknob.co.uk/stepsheets/LRV9X25/choosin-tex
 const SCALE = 50;           // px per floor unit
 const MOVE_WINDOW = 0.45;   // beats a foot spends traveling before it lands
 const TRAIL_MIN_DIST = 0.9; // units a step must travel to earn a path line
-const CAM_DEADZONE = 1.0;   // units the dancer can drift before the camera follows
+const CAM_MAX_LEAD = 1.6;   // units the dancer may drift off-center before the camera is dragged
 
 let dance = null;
 let WALL_BEATS = 8, TOTAL_BEATS = 8;
@@ -1157,6 +1159,7 @@ const state = {
   loopLen: 8,
   introCountdown: null,
   cam: { x: 0, y: 0 },
+  camLag: 0,
   viewTheta: 0,
   lastBeatInt: -1
 };
@@ -1192,12 +1195,18 @@ function render() {
   const theta = thetaAt(t);
   const midX = (L.x + R.x) / 2, midY = (L.y + R.y) / 2;
 
-  // loose camera: only follows once the dancer leaves a deadzone, and slowly,
-  // so steps visibly travel across the floor
+  // camera with intent: while the dancer travels it barely follows, letting
+  // the feet drift off-center so the motion reads on screen; once the feet
+  // settle it glides back to center so the dance stays easy to follow
   const errX = midX - state.cam.x, errY = midY - state.cam.y;
   const dist = Math.hypot(errX, errY);
-  if (dist > CAM_DEADZONE) {
-    const pull = (dist - CAM_DEADZONE) / dist * 0.06;
+  const traveling = !L.settled || !R.settled;
+  state.camLag = Math.min(1, Math.max(0, state.camLag + (traveling ? 0.10 : -0.035)));
+  if (dist > 1e-4) {
+    let pull = 0.12 - 0.10 * state.camLag;
+    // hard leash: past CAM_MAX_LEAD the camera is dragged along regardless
+    const excess = dist - CAM_MAX_LEAD;
+    if (excess > 0) pull += excess / dist * 0.5;
     state.cam.x += errX * pull;
     state.cam.y += errY * pull;
   }
@@ -1568,6 +1577,7 @@ function seek(t) {
   const L = footState("L", state.t), R = footState("R", state.t);
   state.cam.x = (L.x + R.x) / 2;
   state.cam.y = (L.y + R.y) / 2;
+  state.camLag = 0;
   state.viewTheta = thetaAt(state.t);
   render();
 }
