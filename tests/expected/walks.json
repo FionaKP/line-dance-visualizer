@@ -1,0 +1,18 @@
+{
+  "meta": { "ok": true, "wallBeats": 16, "walls": 1, "warnings": 0 },
+  "events": [
+    { "beat": 0, "foot": "R", "dy": 0.9 },
+    { "beat": 1, "foot": "L", "dy": 0.9 },
+    { "beat": 2, "foot": "R", "dy": 0.9 },
+    { "beat": 3, "foot": "L", "dy": 0.9 },
+    { "beat": 4, "foot": "R", "dy": -0.9 },
+    { "beat": 5, "foot": "L", "dy": -0.9 },
+    { "beat": 6, "foot": "R", "dy": -0.9 },
+    { "beat": 7, "foot": "L", "dy": -0.9 },
+    { "beat": 8, "foot": "L", "dy": 0.9 },
+    { "beat": 11, "foot": "R", "dy": 0.9 },
+    { "beat": 12, "foot": "L", "dyMin": 0.5 },
+    { "beat": 13, "foot": "R", "dyMax": 0 },
+    { "beat": 14, "foot": "L", "dyMin": 0.5 }
+  ]
+}

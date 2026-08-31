@@ -1,0 +1,9 @@
+{
+  "meta": { "ok": true, "warnings": 12 },
+  "events": [
+    { "beat": 0, "foot": "R", "dy": 0.9 },
+    { "beat": 1, "foot": "L", "dy": 0.9 },
+    { "beat": 2, "foot": "R", "dy": 0.9 },
+    { "beat": 3, "foot": "L", "dy": 0.9 }
+  ]
+}

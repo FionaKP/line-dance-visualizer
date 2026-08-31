@@ -1,0 +1,22 @@
+{
+  "meta": { "ok": true, "wallBeats": 24, "walls": 4, "warnings": 0 },
+  "events": [
+    { "beat": 0, "foot": "R", "dx": 1.7, "dy": 0 },
+    { "beat": 1, "foot": "L", "dx": -0.85, "dy": 0 },
+    { "beat": 2, "foot": "R", "dyMin": 0.5 },
+    { "beat": 2.5, "foot": "L", "dyMax": 0 },
+    { "beat": 3, "foot": "R", "dyMin": 0.5 },
+    { "beat": 4, "foot": "L", "dx": -1.7 },
+    { "beat": 6, "foot": "L", "dyMax": -0.5 },
+    { "beat": 8, "foot": "R", "dy": -1.1 },
+    { "beat": 10, "foot": "R", "turn": -60 },
+    { "beat": 10.5, "foot": "L", "turn": -60 },
+    { "beat": 11, "foot": "R", "turn": -60 },
+    { "beat": 14, "foot": "L", "turn": 60 },
+    { "beat": 16, "foot": "R", "dyMax": -0.5 },
+    { "beat": 17, "foot": "L", "badge": "HOOK", "lifted": true },
+    { "beat": 20, "foot": "R", "badge": "SKATE" },
+    { "beat": 21, "foot": "L", "badge": "SKATE" },
+    { "beat": 22, "foot": "R", "dy": 1.05 }
+  ]
+}

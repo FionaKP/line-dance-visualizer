@@ -1,0 +1,21 @@
+{
+  "meta": { "ok": true, "wallBeats": 32, "walls": 2, "warnings": 0 },
+  "events": [
+    { "beat": 0, "foot": "R", "dx": 1.7 },
+    { "beat": 1, "foot": "L", "dxMin": 0, "dyMax": 0 },
+    { "beat": 2, "foot": "R", "dx": 1.7 },
+    { "beat": 3, "foot": "L", "lifted": true, "badge": "TOUCH" },
+    { "beat": 4, "foot": "L", "lifted": true, "pose": "toe" },
+    { "beat": 6, "foot": "R", "lifted": true, "pose": "heel" },
+    { "beat": 7, "foot": "R", "badge": "HOOK", "lifted": true },
+    { "beat": 8, "foot": "L", "dyMin": 0.5 },
+    { "beat": 9, "turn": 180 },
+    { "beat": 10, "foot": "L", "badge": "KICK", "lifted": true },
+    { "beat": 12, "foot": "R", "dxMax": 0, "dyMin": 0 },
+    { "beat": 14, "foot": "R", "dyMax": -0.5 },
+    { "beat": 16, "foot": "R", "badge": "STOMP" },
+    { "beat": 20, "foot": "R", "dy": 0.9 },
+    { "beat": 21, "foot": "L", "dy": 0.9 },
+    { "beat": 22, "foot": "R", "dy": 0.9 }
+  ]
+}

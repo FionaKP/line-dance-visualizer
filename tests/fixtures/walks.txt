@@ -1,0 +1,10 @@
+Walk Test
+Count: 16 Wall: 1 Level: Beginner
+
+SECTION 1: WALKS
+1 2 3 4 Walk right, left, right, left
+5 6 7 8 Walk back right, left, right, left
+
+SECTION 2: MORE WALKS
+1 2 3 4 Walk forward left, right, left, right
+5 6 7 8 Shuffle fwd left, right, left, hold
