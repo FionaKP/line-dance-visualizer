@@ -108,6 +108,9 @@ def parse_sheet_page(page, url):
         # everything from the contact/update footer down is site chrome
         if re.match(r"^(contact|last update)\b", l, re.I):
             break
+        # calendar/date fragments from the page sidebar
+        if re.match(r"^\d{0,2}\s*(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\b", l, re.I):
+            continue
         lines.append(l)
     body = "\n".join(lines)
     body = re.sub(r"\n{3,}", "\n\n", body).strip()
@@ -129,6 +132,78 @@ def parse_sheet_page(page, url):
     text = "\n".join(header) + "\n\n" + body
 
     return {"title": title, "url": url, "text": text}
+
+
+def walk_json(node, key):
+    """Yield every value of `key` anywhere in a nested JSON structure."""
+    if isinstance(node, dict):
+        for k, v in node.items():
+            if k == key:
+                yield v
+            else:
+                yield from walk_json(v, key)
+    elif isinstance(node, list):
+        for item in node:
+            yield from walk_json(item, key)
+
+
+def parse_music_results(page):
+    m = re.search(r"var ytInitialData = (\{.*?\});</script>", page, re.S)
+    if not m:
+        return []
+    try:
+        data = json.loads(m.group(1))
+    except json.JSONDecodeError:
+        return []
+    results = []
+    for vr in walk_json(data, "videoRenderer"):
+        try:
+            title = "".join(r["text"] for r in vr["title"]["runs"])
+            channel = "".join(r["text"] for r in vr.get("ownerText", {}).get("runs", []))
+            length = vr.get("lengthText", {}).get("simpleText", "")
+            results.append({"videoId": vr["videoId"], "title": title,
+                            "channel": channel, "length": length})
+        except (KeyError, TypeError):
+            continue
+        if len(results) >= 8:
+            break
+    return results
+
+
+ANDROID_CLIENT = {
+    "clientName": "ANDROID", "clientVersion": "20.10.38", "androidSdkVersion": 30,
+    "userAgent": "com.google.android.youtube/20.10.38 (Linux; U; Android 11) gzip",
+}
+
+
+def fetch_transcript(video_id):
+    # the web watch page hides caption URLs behind proof-of-origin tokens;
+    # the Android innertube client still hands them out directly
+    body = json.dumps({"context": {"client": ANDROID_CLIENT}, "videoId": video_id}).encode()
+    req = urllib.request.Request(
+        "https://www.youtube.com/youtubei/v1/player?prettyPrint=false", data=body,
+        headers={"Content-Type": "application/json", "User-Agent": ANDROID_CLIENT["userAgent"]})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        data = json.load(r)
+    tracks = (data.get("captions", {}).get("playerCaptionsTracklistRenderer", {})
+              .get("captionTracks", []))
+    if not tracks:
+        return {"error": "No captions available for this video."}
+    track = next((t for t in tracks if t.get("languageCode", "").startswith("en")), tracks[0])
+    req = urllib.request.Request(track["baseUrl"],
+                                 headers={"User-Agent": ANDROID_CLIENT["userAgent"]})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        xml = r.read().decode("utf-8", "replace")
+    segs = []
+    for sm in re.finditer(r'<p t="(\d+)"(?: d="(\d+)")?[^>]*>(.*?)</p>', xml, re.S):
+        text = html.unescape(re.sub(r"<[^>]+>", " ", sm.group(3)))
+        text = " ".join(text.split())
+        if text and text not in ("[Music]", "[Applause]"):
+            segs.append({"t": round(int(sm.group(1)) / 1000, 2),
+                         "d": round(int(sm.group(2) or 0) / 1000, 2), "text": text})
+    if not segs:
+        return {"error": "Captions exist but came back empty."}
+    return {"segments": segs, "language": track.get("languageCode", "")}
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -156,6 +231,21 @@ class Handler(SimpleHTTPRequestHandler):
                 }
                 page = fetch(BASE + "/search?" + urllib.parse.urlencode(params))
                 self.send_json({"results": parse_search_results(page)})
+                return
+
+            if parsed.path == "/api/music":
+                q = qs.get("q", [""])[0]
+                page = fetch("https://www.youtube.com/results?search_query=" +
+                             urllib.parse.quote(q))
+                self.send_json({"results": parse_music_results(page)})
+                return
+
+            if parsed.path == "/api/transcript":
+                vid = qs.get("v", [""])[0]
+                if not re.match(r"^[\w-]{11}$", vid):
+                    self.send_json({"error": "Invalid video id."}, 400)
+                    return
+                self.send_json(fetch_transcript(vid))
                 return
 
             if parsed.path == "/api/sheet":

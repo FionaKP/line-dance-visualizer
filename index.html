@@ -219,6 +219,29 @@
   .result .r-title b { color: var(--accent); font-weight: 600; }
   .result .r-sub { color: var(--muted); font-size: 0.76rem; margin-top: 2px; }
 
+  .music { padding: 14px 16px; margin-top: 16px; }
+  .music h2 { font-size: 0.95rem; margin-bottom: 10px; }
+  #player-wrap iframe { width: 100%; height: 210px; border: 0; border-radius: 8px; }
+  .sync-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+    margin-top: 10px;
+    font-size: 0.8rem;
+    color: var(--muted);
+  }
+  .sync-controls button { padding: 6px 9px; font-size: 0.78rem; }
+  .sync-controls input {
+    width: 70px;
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 5px 6px;
+    margin: 0 4px;
+  }
+
   .loader { margin-top: 16px; }
   .loader summary {
     cursor: pointer;
@@ -253,6 +276,7 @@
   </header>
 
   <div class="layout">
+    <div>
     <div class="card">
       <svg id="floor" viewBox="0 0 520 440">
         <defs>
@@ -279,6 +303,8 @@
           <ellipse id="shadowR" rx="14" ry="7" fill="#000" opacity="0.35"/>
           <ellipse id="contactL" rx="9" ry="6" fill="none" stroke="#e8eaf0" stroke-width="2.5" opacity="0"/>
           <ellipse id="contactR" rx="9" ry="6" fill="none" stroke="#e8eaf0" stroke-width="2.5" opacity="0"/>
+          <circle id="impactL" fill="none" stroke="#2dd4bf" stroke-width="3" opacity="0"/>
+          <circle id="impactR" fill="none" stroke="#fb923c" stroke-width="3" opacity="0"/>
           <g id="footL"></g>
           <g id="footR"></g>
         </g>
@@ -331,6 +357,32 @@
         <span><span class="dash"></span>Travel path</span>
         <span><span class="dot" style="background:transparent;border:2px solid var(--text)"></span>Ring = toe or heel contact</span>
       </div>
+    </div>
+
+    <div class="card music">
+      <h2>Music</h2>
+      <div class="search-row">
+        <input type="text" id="music-q" placeholder="Song to find on YouTube..">
+        <button class="primary" id="btn-music-auto" title="Search YouTube, pick a captioned video, and line up the start from the stepsheet's lyric cue">Auto match</button>
+        <button id="btn-music">Search</button>
+      </div>
+      <div class="search-status" id="music-status"></div>
+      <div class="results" id="music-results" style="max-height:170px"></div>
+      <div id="player-wrap" style="display:none">
+        <div id="yt-player"></div>
+        <div class="sync-controls">
+          <label>Count 1 at <input type="number" id="start-time" step="0.1"> s</label>
+          <button id="btn-start-now" title="Set to the video's current time">Set to now</button>
+          <button id="btn-cue" title="Find the stepsheet's lyric cue in the video captions">From lyrics</button>
+          <button id="btn-n-b1">-1s</button>
+          <button id="btn-n-b01">-0.1</button>
+          <button id="btn-n-f01">+0.1</button>
+          <button id="btn-n-f1">+1s</button>
+          <button id="btn-tap" title="Tap along with the beat to set the tempo">Tap tempo</button>
+          <button id="btn-sync" title="Drive the dance from the video playhead">Sync to video</button>
+        </div>
+      </div>
+    </div>
     </div>
 
     <div>
@@ -421,7 +473,15 @@ const KIND = {
   rock_fwd:           { dx: 0.85,  dy: 1.05 },
   rock_back:          { dx: 0.85,  dy: -1.1 },
   rock_side:          { dx: 1.5,   dy: 0 },
-  stomp:              { dx: 0.85,  dy: 0.35 },
+  stomp:              { dx: 0.85,  dy: 0.35, impact: true, badge: "STOMP" },
+  // self-anchored moves: position/angle change relative to the foot's own
+  // spot, for twists and swivels where feet rotate in place
+  swivel_left:        { dx: -0.18, dy: 0, aOff: 22,  self: true, noMirror: true, noWeight: true, badge: "SWIVEL" },
+  swivel_right:       { dx: 0.18,  dy: 0, aOff: -22, self: true, noMirror: true, noWeight: true, badge: "SWIVEL" },
+  split_heels_out:    { dx: 0.15,  dy: 0, aOff: -18, self: true, noWeight: true, badge: "HEELS" },
+  split_toes_out:     { dx: 0.15,  dy: 0, aOff: 20,  self: true, noWeight: true, badge: "TOES" },
+  split_center:       { dx: -0.15, dy: 0, aOff: 0,   self: true, noWeight: true },
+  sweep_back:         { dx: 0.9,   dy: -0.5, lifted: true, pose: "air", badge: "SWEEP" },
   touch_beside:       { dx: 0.85,  dy: 0, lifted: true, pose: "toe", badge: "TOUCH" },
   touch_side:         { dx: 1.55,  dy: 0, lifted: true, pose: "toe", badge: "TOUCH" },
   touch_fwd:          { dx: 0.85,  dy: 0.8, lifted: true, pose: "toe", badge: "TOUCH" },
@@ -489,16 +549,48 @@ function parsePhrase(raw, ctx, warn) {
     if (steps.length) return steps;
   }
 
-  if (/^(hold|clap|snap)\b/.test(lower)) { out.push({ kind: "hold", txt: cap(p) }); return out; }
+  if (/^(hold|clap|snap|slap)\b/.test(lower)) { out.push({ kind: "hold", txt: cap(p) }); return out; }
   if (/\b(bump|hip)\b/.test(lower)) {
     ctx.mode = "bump";
     out.push({ kind: "hold", txt: cap(p) });
     return out;
   }
+
+  // twists, swivels, and heel/toe splits: both feet rotate in place
+  const splitReturn = ctx.mode === "split" &&
+    /\b(center|centre|together|close|in|back)\b/.test(lower) && !/\b(out|apart|open)\b/.test(lower);
+  if (/\b(swivel|twist|split)s?\b/.test(lower) || splitReturn) {
+    const toes = /\btoes?\b/.test(lower) && !/\bheels?\b/.test(lower);
+    let kind;
+    if (splitReturn || (/\b(center|centre|together|close)\b/.test(lower) && !/\b(out|apart|open)\b/.test(lower))) {
+      kind = "split_center";
+    } else if (/\b(out|apart|open)\b/.test(lower) || /\bsplits?\b/.test(lower)) {
+      kind = toes ? "split_toes_out" : "split_heels_out";
+    } else if (/\bleft\b/.test(lower)) {
+      kind = "swivel_left";
+    } else if (/\bright\b/.test(lower)) {
+      kind = "swivel_right";
+    } else {
+      kind = "split_center";
+    }
+    ctx.mode = "split";
+    out.push({ kind, foot: "R", txt: cap(p) });
+    out.push({ kind, foot: "L", txt: cap(p), sameBeat: true });
+    return out;
+  }
+
+  // "bring/lift/raise the foot" moves
+  if (/\b(bring|lift|raise)\b/.test(lower)) {
+    const f = foot || other(ctx.lastFoot || "L");
+    if (/\b(behind|back)\b/.test(lower)) push("sweep_back", f);
+    else if (/\b(front|cross|over)\b/.test(lower)) push("hook", f);
+    else push("hitch", f);
+    return out;
+  }
   if (/\bpivot\b|\bpaddle\b/.test(lower)) { out.push({ kind: "pivot", txt: cap(p) }); return out; }
 
   if (/\b(shuffle|chassé|chasse|triple)\b/.test(lower)) {
-    const dir = /\bback\b/.test(lower) ? "back" : /\bside\b/.test(lower) ? "side" : "fwd";
+    const dir = /\bback(?:wards?)?\b/.test(lower) ? "back" : /\bside\b/.test(lower) ? "side" : "fwd";
     const feet = [...lower.matchAll(/\b(right|left)\b/g)].map(m => m[1] === "right" ? "R" : "L");
     const first = feet[0] || other(ctx.lastFoot || "L");
     ctx.mode = "shuffle"; ctx.dir = dir; ctx.shufflePos = 0;
@@ -547,7 +639,7 @@ function parsePhrase(raw, ctx, warn) {
     return out;
   }
   if (/\btoe\b/.test(lower)) {
-    const kind = /\b(back|behind)\b/.test(lower) ? "toe_back"
+    const kind = /\b(back(?:wards?)?|behind)\b/.test(lower) ? "toe_back"
                : /\b(forward|fwd|front)\b/.test(lower) ? "touch_fwd"
                : /\b(beside|together|next)\b/.test(lower) ? "touch_beside" : "touch_side";
     push(kind, foot || other(ctx.lastFoot || "L"));
@@ -562,7 +654,7 @@ function parsePhrase(raw, ctx, warn) {
   if (/\b(touch|tap)\b/.test(lower)) {
     const kind = /\b(beside|together|next)\b/.test(lower) ? "touch_beside"
                : /\b(forward|fwd|front)\b/.test(lower) ? "touch_fwd"
-               : /\b(back|behind)\b/.test(lower) ? "touch_back" : "touch_side";
+               : /\b(back(?:wards?)?|behind)\b/.test(lower) ? "touch_back" : "touch_side";
     push(kind, foot || other(ctx.lastFoot || "L"));
     return out;
   }
@@ -591,8 +683,9 @@ function parsePhrase(raw, ctx, warn) {
     else if (/\b(across|over|cross)\b/.test(lower)) kind = "cross_front";
     else if (/\bside\b/.test(lower)) kind = "side";
     else if (/\b(forward|fwd)\b/.test(lower)) kind = "fwd";
-    else if (/\bback\b/.test(lower)) kind = "back";
+    else if (/\bback(?:wards?)?\b/.test(lower)) kind = "back";
     else if (bareFoot && ctx.mode === "walk") kind = "fwd";
+    else if (/^(?:lock )?step (?:on )?(right|left)$/.test(lower)) kind = "place";
     else { kind = "close"; warn("Guessed 'step together' for: \"" + p + "\""); }
     const st = push(kind, f);
     if (/\b(hop|scoot)\b/.test(lower)) st.badge = /\bscoot\b/.test(lower) ? "SCOOT" : "HOP";
@@ -627,15 +720,15 @@ function parseStepsheet(text) {
   let title = null;
   let intro = null;
 
-  let offset = 0;
+  let offset = 0;        // added to a line's printed counts to get global beats
   let pendingName = null;
   let cur = null;        // current section
   let prevFirstNum = Infinity;
-  let maxBeat = 0;       // highest 0-based beat used in current section
+  let globalMax = 0;     // highest global beat seen
 
   const closeSection = () => {
-    if (cur) { cur.beats = Math.ceil(maxBeat + 0.5); offset += cur.beats; }
-    cur = null; maxBeat = 0;
+    if (cur) cur.beats = Math.max(1, Math.ceil(globalMax + 0.5) - cur.startBeat);
+    cur = null;
   };
 
   for (const rawLine of text.split(/\r?\n/)) {
@@ -671,11 +764,17 @@ function parseStepsheet(text) {
       }
       if (!tokens.length) continue;
 
-      // section bookkeeping: counts restarting from 1 mean a new section
+      // counts that restart from 1 advance the global offset; sheets with
+      // continuous counts (1-32 straight through) keep offset at 0 no matter
+      // how many section headers they have
       const firstNum = tokens[0].beat;
+      if (cur && firstNum < prevFirstNum) {
+        offset = Math.ceil(globalMax + 0.5);
+      }
       if (!cur || firstNum < prevFirstNum || pendingName) {
         closeSection();
-        cur = { name: pendingName || "Section " + (sections.length + 1), startBeat: offset, beats: 8 };
+        cur = { name: pendingName || "Section " + (sections.length + 1),
+                startBeat: offset + firstNum, beats: 8 };
         sections.push(cur);
         pendingName = null;
       }
@@ -683,7 +782,15 @@ function parseStepsheet(text) {
 
       // pull out the end-of-wall note before general turn matching
       const noteM = desc.match(/note\s*:.*$/i);
-      let cleaned = desc.replace(/\(.*?\)/g, " ");
+      // parentheticals: drop wall markers and options, keep real directions
+      // like "(forward)" in "lock step right (forward)"
+      let cleaned = desc.replace(/\(([^)]*)\)/g, (m, inner) => {
+        if (/[\d:]/.test(inner) && !/\b(forward|fwd|back|side)\b/i.test(inner)) return " ";
+        if (/\b(left|right|forward|fwd|back|backward|side|together|behind|across|front)\b/i.test(inner)) {
+          return " " + inner + " ";
+        }
+        return " ";
+      });
       if (noteM) {
         const noteTurn = matchTurn(noteM[0].replace(/\(.*?\)/g, " "));
         if (noteTurn && /new wall|next wall|to start/i.test(noteM[0])) wallTurn = noteTurn.deg;
@@ -718,7 +825,7 @@ function parseStepsheet(text) {
 
       // section length counts every beat on the line, even ones whose step
       // could not be parsed
-      for (const tk of tokens) maxBeat = Math.max(maxBeat, tk.beat);
+      for (const tk of tokens) globalMax = Math.max(globalMax, offset + tk.beat);
 
       // steps marked sameBeat share the previous step's count; if there are
       // spare counts, promote them to their own count instead
@@ -731,7 +838,7 @@ function parseStepsheet(text) {
         warn("Counts \"" + countStr + "\" have " + tokens.length + " beats but " + consuming +
              " steps were parsed: \"" + desc + "\"");
       }
-      const b0 = cur.startBeat + tokens[0].beat;
+      const b0 = offset + tokens[0].beat;
       let b1 = b0;
       let lastFootForPivot = null;
       let ti = 0, lastTok = null;
@@ -742,7 +849,7 @@ function parseStepsheet(text) {
         }
         const tk = lastTok;
         if (!tk) continue;
-        const beat = cur.startBeat + tk.beat;
+        const beat = offset + tk.beat;
         b1 = Math.max(b1, beat);
         const ev = { beat, c: tk.c, txt: st.txt };
         if (st.turn) ev.turn = st.turn;
@@ -751,14 +858,18 @@ function parseStepsheet(text) {
         else if (st.kind === "pivot") { ev.weight = other(lastFootForPivot || "L"); }
         else {
           const k = KIND[st.kind];
+          const mir = st.foot === "L" && !k.noMirror ? -1 : 1;
           ev.foot = st.foot;
-          ev.dx = st.foot === "L" ? -k.dx : k.dx;
+          ev.dx = k.dx * mir;
           ev.dy = k.dy;
           if (k.lifted) ev.lifted = true;
-          if (k.aOff) ev.aOff = st.foot === "L" ? -k.aOff : k.aOff;
+          if (k.aOff) ev.aOff = k.aOff * mir;
+          if (k.self) ev.self = true;
+          if (k.noWeight) ev.noWeight = true;
+          if (k.impact) ev.impact = true;
           if (k.pose) ev.pose = k.pose;
           if (st.badge || k.badge) ev.badge = st.badge || k.badge;
-          if (!k.lifted) lastFootForPivot = st.foot;
+          if (!k.lifted && !k.noWeight) lastFootForPivot = st.foot;
         }
         events.push(ev);
       }
@@ -790,7 +901,7 @@ function parseStepsheet(text) {
     warn("Sheet says " + meta.walls + " walls but the parsed turns give " + walls +
          (walls === 1 ? " (no turn between walls was found)" : "") + ".");
   }
-  const wallBeats = offset;
+  const wallBeats = Math.ceil(globalMax + 0.5);
   if (meta.count && meta.count !== wallBeats) {
     warn("Sheet says " + meta.count + " counts but the parsed sections total " + wallBeats + ".");
   }
@@ -880,14 +991,15 @@ function buildTimeline() {
         }
       }
       if (ev.foot) {
-        const o = feet[other(ev.foot)];
+        const o = ev.self ? feet[ev.foot] : feet[other(ev.foot)];
         const th = theta * Math.PI / 180;
         const x = o.x + ev.dx * Math.cos(th) + ev.dy * Math.sin(th);
         const y = o.y - ev.dx * Math.sin(th) + ev.dy * Math.cos(th);
         const a = theta + (ev.aOff || 0);
         feet[ev.foot] = { x, y, a };
-        kf[ev.foot].push({ t, x, y, a, lifted: !!ev.lifted, pose: ev.pose || "flat", badge: ev.badge || null });
-        if (!ev.lifted) weightKF.push({ t, foot: ev.foot });
+        kf[ev.foot].push({ t, x, y, a, lifted: !!ev.lifted, pose: ev.pose || "flat",
+                           badge: ev.badge || null, impact: !!ev.impact });
+        if (!ev.lifted && !ev.noWeight) weightKF.push({ t, foot: ev.foot });
       }
       if (ev.weight) weightKF.push({ t, foot: ev.weight });
     }
@@ -933,13 +1045,19 @@ function footState(foot, t) {
   const win = Math.min(MOVE_WINDOW, (next.t - prev.t) * 0.9);
   const start = next.t - win;
   if (t < start) return base;
-  const s = ease(Math.min(1, (t - start) / win));
+  const raw = Math.min(1, (t - start) / win);
+  const s = ease(raw);
   const prevLift = poseLift(prev), nextLift = poseLift(next);
+  // stomps rear up high and slam down early instead of gliding
+  const moveS = next.impact ? Math.min(1, s / 0.7) : s;
+  const lift = next.impact
+    ? Math.sin(Math.PI * Math.min(1, raw / 0.8)) * 1.5
+    : Math.max(Math.sin(Math.PI * s), prevLift + (nextLift - prevLift) * s);
   return {
-    x: prev.x + (next.x - prev.x) * s,
-    y: prev.y + (next.y - prev.y) * s,
-    a: lerpAngle(prev.a, next.a, s),
-    lift: Math.max(Math.sin(Math.PI * s), prevLift + (nextLift - prevLift) * s),
+    x: prev.x + (next.x - prev.x) * moveS,
+    y: prev.y + (next.y - prev.y) * moveS,
+    a: lerpAngle(prev.a, next.a, moveS),
+    lift: Math.max(lift, prevLift + (nextLift - prevLift) * s),
     pose: s < 0.5 ? prev.pose : next.pose,
     settled: s > 0.85
   };
@@ -1005,6 +1123,8 @@ const elShadowL = document.getElementById("shadowL");
 const elShadowR = document.getElementById("shadowR");
 const elContactL = document.getElementById("contactL");
 const elContactR = document.getElementById("contactR");
+const elImpactL = document.getElementById("impactL");
+const elImpactR = document.getElementById("impactR");
 const elBadgeL = document.getElementById("badgeL");
 const elBadgeR = document.getElementById("badgeR");
 const elTrailL = document.getElementById("trailL");
@@ -1035,6 +1155,7 @@ const state = {
   loopSection: false,
   loopFrom: 0,
   loopLen: 8,
+  introCountdown: null,
   cam: { x: 0, y: 0 },
   viewTheta: 0,
   lastBeatInt: -1
@@ -1089,6 +1210,8 @@ function render() {
 
   renderTrail("L", elTrailL, elDotL, t);
   renderTrail("R", elTrailR, elDotR, t);
+  renderImpact("L", elImpactL, t);
+  renderImpact("R", elImpactR, t);
   renderTurnArc(t, midX, midY, viewRot);
 
   placeFoot(footGlyphL, elShadowL, elContactL, L);
@@ -1236,6 +1359,23 @@ function renderTrail(foot, elLine, elDot, t) {
   elDot.setAttribute("opacity", alpha);
 }
 
+// Expanding shockwave ring where a stomp just landed.
+function renderImpact(foot, el, t) {
+  const arr = kf[foot];
+  const cur = arr[findIdx(arr, t)];
+  const age = t - cur.t;
+  if (!cur.impact || age < 0 || age > 0.5) {
+    el.setAttribute("opacity", 0);
+    return;
+  }
+  const p = age / 0.5;
+  el.setAttribute("cx", cur.x * SCALE);
+  el.setAttribute("cy", -cur.y * SCALE);
+  el.setAttribute("r", 12 + p * 28);
+  el.setAttribute("stroke-width", 3.5 * (1 - p) + 0.5);
+  el.setAttribute("opacity", 0.7 * (1 - p));
+}
+
 // Curved arrow around the dancer while facing changes over the last 1.5 beats.
 function renderTurnArc(t, midX, midY, viewRot) {
   const th0 = thetaAt(t - 1.5);
@@ -1296,6 +1436,12 @@ const elNowSection = document.getElementById("now-section");
 const elNowStep = document.getElementById("now-step");
 
 function renderNow(t) {
+  if (state.introCountdown != null) {
+    elNowCount.textContent = "♪";
+    elNowSection.textContent = "Intro";
+    elNowStep.textContent = "Dance starts in " + state.introCountdown + " counts";
+    return;
+  }
   const ev = eventAt(t);
   const local = ((t % WALL_BEATS) + WALL_BEATS) % WALL_BEATS;
   elNowCount.textContent = ev.c;
@@ -1402,6 +1548,7 @@ function loadDance(parsed, url) {
   lastClock = "12:00";
   state.loopSection = false;
   document.getElementById("btn-loop-sec").classList.remove("toggled");
+  loadMusicPrefs();
   seek(0);
   setPlaying(false);
 }
@@ -1436,7 +1583,22 @@ function reanchor() {
 }
 
 function frame() {
-  if (state.playing) {
+  if (music.synced && ytPlayer && ytPlayer.getPlayerState) {
+    // the video playhead is the clock
+    const playing = ytPlayer.getPlayerState() === 1;
+    if (playing !== state.playing) {
+      state.playing = playing;
+      btnPlay.textContent = playing ? "Pause" : "Play";
+    }
+    const tb = (ytPlayer.getCurrentTime() - music.start) * state.bpm / 60;
+    state.introCountdown = tb < 0 ? Math.ceil(-tb) : null;
+    state.t = tb < 0 ? 0 : tb % TOTAL_BEATS;
+    const beatInt = Math.floor(tb);
+    if (playing && beatInt !== state.lastBeatInt) {
+      state.lastBeatInt = beatInt;
+      if (tb >= 0) tick(beatInt % 8 === 0);
+    }
+  } else if (state.playing) {
     state.t = anchorT + (performance.now() - anchorMs) / 1000 * state.bpm / 60;
 
     if (state.loopSection && state.t >= state.loopFrom + state.loopLen) {
@@ -1462,7 +1624,14 @@ function setPlaying(p) {
   if (p) reanchor();
   btnPlay.textContent = p ? "Pause" : "Play";
 }
-btnPlay.addEventListener("click", () => setPlaying(!state.playing));
+function togglePlay() {
+  if (music.synced && ytPlayer && ytPlayer.getPlayerState) {
+    if (ytPlayer.getPlayerState() === 1) ytPlayer.pauseVideo(); else ytPlayer.playVideo();
+    return;
+  }
+  setPlaying(!state.playing);
+}
+btnPlay.addEventListener("click", togglePlay);
 
 document.getElementById("btn-restart").addEventListener("click", () => seek(0));
 
@@ -1512,13 +1681,267 @@ bpmInput.addEventListener("input", () => {
   state.bpm = +bpmInput.value;
   bpmVal.textContent = state.bpm + " bpm";
   reanchor();
+  if (music.videoId) saveMusicPrefs();
 });
 
 document.addEventListener("keydown", (e) => {
   if (["TEXTAREA", "INPUT", "SELECT"].includes(e.target.tagName)) return;
-  if (e.code === "Space") { e.preventDefault(); setPlaying(!state.playing); }
+  if (e.code === "Space") { e.preventDefault(); togglePlay(); }
   else if (e.code === "ArrowRight") { e.preventDefault(); stepEvent(1); }
   else if (e.code === "ArrowLeft") { e.preventDefault(); stepEvent(-1); }
+});
+
+// --- Music: YouTube search, lyric-cue alignment, and playback sync --------
+
+const music = { videoId: null, start: 0, synced: false };
+let ytPlayer = null;
+let ytApiLoading = false;
+const elMusicStatus = document.getElementById("music-status");
+const elMusicResults = document.getElementById("music-results");
+const elStartTime = document.getElementById("start-time");
+
+function musicStatus(msg) { elMusicStatus.textContent = msg; }
+function musicKey() { return "music:" + (dance.url || dance.title); }
+
+function saveMusicPrefs() {
+  try {
+    localStorage.setItem(musicKey(), JSON.stringify({
+      videoId: music.videoId, start: music.start, bpm: state.bpm
+    }));
+  } catch (e) { /* private mode */ }
+}
+
+function loadMusicPrefs() {
+  music.videoId = null;
+  music.start = 0;
+  setSynced(false);
+  document.getElementById("player-wrap").style.display = "none";
+  elMusicResults.innerHTML = "";
+  musicStatus("");
+  document.getElementById("music-q").value = dance.meta.music || dance.title;
+  try {
+    const saved = JSON.parse(localStorage.getItem(musicKey()));
+    if (saved && saved.videoId) {
+      music.start = saved.start || 0;
+      elStartTime.value = music.start;
+      if (saved.bpm) {
+        state.bpm = saved.bpm;
+        bpmInput.value = saved.bpm;
+        bpmVal.textContent = saved.bpm + " bpm";
+      }
+      selectVideo(saved.videoId, "saved video");
+      musicStatus("Restored saved video and sync settings.");
+    }
+  } catch (e) { /* ignore */ }
+}
+
+function ensureYT(cb) {
+  if (window.YT && window.YT.Player) return cb();
+  const prev = window.onYouTubeIframeAPIReady;
+  window.onYouTubeIframeAPIReady = () => { if (prev) prev(); cb(); };
+  if (!ytApiLoading) {
+    ytApiLoading = true;
+    const s = document.createElement("script");
+    s.src = "https://www.youtube.com/iframe_api";
+    document.head.appendChild(s);
+  }
+}
+
+function selectVideo(videoId, title) {
+  music.videoId = videoId;
+  saveMusicPrefs();
+  document.getElementById("player-wrap").style.display = "";
+  elStartTime.value = music.start;
+  ensureYT(() => {
+    if (ytPlayer && ytPlayer.cueVideoById) {
+      ytPlayer.cueVideoById(videoId);
+    } else if (!ytPlayer) {
+      ytPlayer = new YT.Player("yt-player", {
+        videoId,
+        playerVars: { controls: 1, rel: 0 },
+        events: {
+          onError: () => musicStatus("That video cannot be embedded here; pick another result.")
+        }
+      });
+    }
+  });
+}
+
+async function searchMusic() {
+  const q = document.getElementById("music-q").value.trim();
+  if (!q) { musicStatus("Type a song name first."); return []; }
+  musicStatus("Searching YouTube…");
+  elMusicResults.innerHTML = "";
+  try {
+    const r = await fetch("/api/music?q=" + encodeURIComponent(q));
+    const data = await r.json();
+    if (data.error) throw new Error(data.error);
+    if (!data.results.length) { musicStatus("No videos found."); return []; }
+    musicStatus(data.results.length + " videos");
+    for (const res of data.results) {
+      const div = document.createElement("div");
+      div.className = "result";
+      div.innerHTML = '<div class="r-title"><b></b></div><div class="r-sub"></div>';
+      div.querySelector("b").textContent = res.title;
+      div.querySelector(".r-sub").textContent = res.channel + (res.length ? " · " + res.length : "");
+      div.addEventListener("click", () => {
+        selectVideo(res.videoId, res.title);
+        musicStatus("Selected: " + res.title);
+      });
+      elMusicResults.appendChild(div);
+    }
+    return data.results;
+  } catch (err) {
+    musicStatus("Music search failed: " + err.message);
+    return [];
+  }
+}
+
+// the lyric cue from intros like "Starts after 32 counts (...thought)"
+function cueInfo() {
+  const intro = dance.intro || "";
+  const wordM = intro.match(/\(\s*\.{0,3}\s*(?:on\s+(?:the\s+word\s+)?)?["“']?([A-Za-z']{2,})["”']?\s*\)/);
+  const countM = intro.match(/after\s+(\d+)\s+counts?/i);
+  return { word: wordM ? wordM[1] : null, introCounts: countM ? +countM[1] : null };
+}
+
+function findCueInTranscript(segments, word) {
+  const re = new RegExp("\\b" + word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\b", "i");
+  for (const seg of segments) {
+    const m = re.exec(seg.text);
+    if (m) {
+      // estimate where in the segment the word lands
+      const before = seg.text.slice(0, m.index).split(/\s+/).filter(Boolean).length;
+      const total = seg.text.split(/\s+/).filter(Boolean).length || 1;
+      return { time: seg.t + (seg.d || 0) * (before / total), seg };
+    }
+  }
+  return null;
+}
+
+function applyCueHit(hit, cue) {
+  music.start = Math.round(hit.time * 100) / 100;
+  elStartTime.value = music.start;
+  let bpmNote = "";
+  if (cue.introCounts && hit.time > 3) {
+    const est = Math.round(cue.introCounts * 60 / hit.time);
+    if (est >= 60 && est <= 140) {
+      state.bpm = est;
+      bpmInput.value = est;
+      bpmVal.textContent = est + " bpm";
+      bpmNote = ", tempo ≈ " + est + " bpm";
+    }
+  }
+  saveMusicPrefs();
+  return "count 1 at " + music.start + "s" + bpmNote + " (nudge if needed)";
+}
+
+async function alignFromLyrics() {
+  if (!music.videoId) { musicStatus("Pick a video first."); return; }
+  const cue = cueInfo();
+  if (!cue.word) {
+    musicStatus("No lyric cue found in the stepsheet intro; use \"Set to now\" while listening instead.");
+    return;
+  }
+  musicStatus("Reading captions…");
+  try {
+    const r = await fetch("/api/transcript?v=" + music.videoId);
+    const data = await r.json();
+    if (data.error) throw new Error(data.error);
+    const hit = findCueInTranscript(data.segments, cue.word);
+    if (!hit) {
+      musicStatus("The cue word “" + cue.word + "” is not in this video's captions; try another video or set start manually.");
+      return;
+    }
+    musicStatus("Cue “" + cue.word + "” at " + Math.round(hit.time) + "s: " + applyCueHit(hit, cue));
+  } catch (err) {
+    musicStatus("Caption lookup failed: " + err.message);
+  }
+}
+
+// one-click agent: search, find a captioned video, line it up from the cue
+async function autoMatchMusic() {
+  const results = await searchMusic();
+  if (!results.length) return;
+  const cue = cueInfo();
+  for (const res of results.slice(0, 5)) {
+    musicStatus("Checking captions: " + res.title.slice(0, 50) + "…");
+    try {
+      const r = await fetch("/api/transcript?v=" + res.videoId);
+      const data = await r.json();
+      if (data.error) continue;
+      selectVideo(res.videoId, res.title);
+      if (cue.word) {
+        const hit = findCueInTranscript(data.segments, cue.word);
+        if (hit) {
+          musicStatus("Matched “" + res.title.slice(0, 45) + "”: " + applyCueHit(hit, cue));
+          return;
+        }
+        musicStatus("Selected " + res.title.slice(0, 45) + " (has captions, but the cue “" +
+                    cue.word + "” was not found; set start manually).");
+        return;
+      }
+      musicStatus("Selected " + res.title.slice(0, 45) + " (no lyric cue in the sheet; use Tap tempo and Set to now).");
+      return;
+    } catch (err) { /* try next */ }
+  }
+  musicStatus("No captioned videos in the top results; pick one manually.");
+}
+
+function setSynced(on) {
+  music.synced = on;
+  if (!on) state.introCountdown = null;
+  document.getElementById("btn-sync").classList.toggle("toggled", on);
+}
+
+function nudgeStart(d) {
+  music.start = Math.round((music.start + d) * 100) / 100;
+  elStartTime.value = music.start;
+  saveMusicPrefs();
+}
+
+let taps = [];
+function tapTempo() {
+  const now = performance.now();
+  taps = taps.filter(x => now - x < 3000);
+  taps.push(now);
+  if (taps.length >= 3) {
+    const gaps = [];
+    for (let i = 1; i < taps.length; i++) gaps.push(taps[i] - taps[i - 1]);
+    const bpm = Math.round(60000 / (gaps.reduce((a, b) => a + b, 0) / gaps.length));
+    if (bpm >= 40 && bpm <= 200) {
+      state.bpm = Math.min(140, bpm);
+      bpmInput.value = state.bpm;
+      bpmVal.textContent = state.bpm + " bpm";
+      reanchor();
+      saveMusicPrefs();
+      musicStatus("Tap tempo: " + bpm + " bpm (" + taps.length + " taps)");
+    }
+  } else {
+    musicStatus("Keep tapping on the beat…");
+  }
+}
+
+document.getElementById("btn-music").addEventListener("click", searchMusic);
+document.getElementById("btn-music-auto").addEventListener("click", autoMatchMusic);
+document.getElementById("btn-cue").addEventListener("click", alignFromLyrics);
+document.getElementById("btn-tap").addEventListener("click", tapTempo);
+document.getElementById("btn-sync").addEventListener("click", () => setSynced(!music.synced));
+document.getElementById("btn-start-now").addEventListener("click", () => {
+  if (ytPlayer && ytPlayer.getCurrentTime) {
+    music.start = Math.round(ytPlayer.getCurrentTime() * 100) / 100;
+    elStartTime.value = music.start;
+    saveMusicPrefs();
+    musicStatus("Count 1 set to " + music.start + "s.");
+  }
+});
+document.getElementById("btn-n-b1").addEventListener("click", () => nudgeStart(-1));
+document.getElementById("btn-n-b01").addEventListener("click", () => nudgeStart(-0.1));
+document.getElementById("btn-n-f01").addEventListener("click", () => nudgeStart(0.1));
+document.getElementById("btn-n-f1").addEventListener("click", () => nudgeStart(1));
+elStartTime.addEventListener("change", () => {
+  music.start = +elStartTime.value || 0;
+  saveMusicPrefs();
 });
 
 // --- CopperKnob search (through the local server's proxy endpoints) -------
