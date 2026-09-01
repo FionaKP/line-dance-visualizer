@@ -12,8 +12,8 @@
     --border: #2a2f3f;
     --text: #e8eaf0;
     --muted: #9aa0b0;
-    --left: #2dd4bf;
-    --right: #fb923c;
+    --left: #d64545;
+    --right: #c98f52;
     --accent: #8b9cf9;
     --warn: #f0c05a;
   }
@@ -283,12 +283,6 @@
           <pattern id="grid" width="50" height="50" patternUnits="userSpaceOnUse">
             <path d="M 50 0 L 0 0 0 50" fill="none" stroke="#232838" stroke-width="1"/>
           </pattern>
-          <linearGradient id="bootGradL" x1="0" y1="6" x2="0" y2="36" gradientUnits="userSpaceOnUse">
-            <stop offset="0" stop-color="#6fe7d6"/><stop offset="0.5" stop-color="#2dd4bf"/><stop offset="1" stop-color="#149a89"/>
-          </linearGradient>
-          <linearGradient id="bootGradR" x1="0" y1="6" x2="0" y2="36" gradientUnits="userSpaceOnUse">
-            <stop offset="0" stop-color="#ffb877"/><stop offset="0.5" stop-color="#fb923c"/><stop offset="1" stop-color="#cf6f22"/>
-          </linearGradient>
           <radialGradient id="weightGlow">
             <stop offset="0%" stop-color="#ffffff" stop-opacity="0.22"/>
             <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
@@ -300,13 +294,13 @@
           <path id="turn-arc" fill="none" stroke="#8b9cf9" stroke-width="3" stroke-dasharray="7 6" stroke-linecap="round" opacity="0"/>
           <path id="turn-arrow" fill="#8b9cf9" opacity="0"/>
           <text id="turn-label" font-size="15" font-weight="700" fill="#8b9cf9" text-anchor="middle" opacity="0"></text>
-          <circle id="dotL" r="5" fill="none" stroke="#2dd4bf" stroke-width="2" opacity="0"/>
-          <circle id="dotR" r="5" fill="none" stroke="#fb923c" stroke-width="2" opacity="0"/>
-          <line id="trailL" stroke="#2dd4bf" stroke-width="3" stroke-dasharray="6 7" stroke-linecap="round" opacity="0"/>
-          <line id="trailR" stroke="#fb923c" stroke-width="3" stroke-dasharray="6 7" stroke-linecap="round" opacity="0"/>
+          <circle id="dotL" r="5" fill="none" stroke="#d64545" stroke-width="2" opacity="0"/>
+          <circle id="dotR" r="5" fill="none" stroke="#c98f52" stroke-width="2" opacity="0"/>
+          <line id="trailL" stroke="#d64545" stroke-width="3" stroke-dasharray="6 7" stroke-linecap="round" opacity="0"/>
+          <line id="trailR" stroke="#c98f52" stroke-width="3" stroke-dasharray="6 7" stroke-linecap="round" opacity="0"/>
           <ellipse id="glow" rx="42" ry="30" fill="url(#weightGlow)"/>
-          <circle id="impactL" fill="none" stroke="#2dd4bf" stroke-width="3" opacity="0"/>
-          <circle id="impactR" fill="none" stroke="#fb923c" stroke-width="3" opacity="0"/>
+          <circle id="impactL" fill="none" stroke="#d64545" stroke-width="3" opacity="0"/>
+          <circle id="impactR" fill="none" stroke="#c98f52" stroke-width="3" opacity="0"/>
         </g>
         <!-- dancer layer: drawn in screen space so lift and boot shafts can
              rise vertically on screen while the tilted floor stays flat -->
@@ -320,32 +314,18 @@
           <!-- cowboy boots draw over the shoes: a little vector boot stands
                on the heel once the view tilts. Local frame is a 40x44 sprite
                (toe pointing +x, flipped per facing); anchored under the shaft -->
-          <g id="bootL" opacity="0"><g transform="translate(-16,-35.5)">
-            <path fill="#171a22" d="M5.2,33 L11,33 L10.6,39 L5.4,39 Z"/>
-            <path fill="#171a22" d="M11.5,33 Q20,34.6 33.8,33 Q34.6,34.4 33,35.2 L21,35.6 Q16,35.9 11.8,35 Z"/>
-            <path fill="url(#bootGradL)" stroke="#0f1117" stroke-width="1.1" d="M5,7 Q8,9 11,6.5 Q14,9 17,7 L17.3,22 Q17.5,25.5 21,26.5 Q27,27.5 31,29.5 Q34.5,31.3 33.8,33 L20,33 Q16,33.5 11.5,33 L5.5,33 Q4.8,33 4.9,31 Z"/>
-            <path fill="none" stroke="#b7f5ec" stroke-width="1" opacity="0.75" d="M6.5,12 Q11.5,10 16,12 M6.5,16.5 Q11.5,14.5 16,16.5 M11,6.8 L11,11 M18.5,28 Q21.5,26.2 24.5,27.8"/>
-            <path fill="none" stroke="#0d6e63" stroke-width="1" opacity="0.5" d="M5.6,7.6 Q11,10.2 16.4,7.6"/>
-            <path fill="none" stroke="#ffffff" stroke-width="1.1" opacity="0.5" d="M29,30.2 Q31.4,30.9 32.6,32"/>
-            <text class="blab" y="3.5" font-size="9" font-weight="700" fill="#0e2a26" text-anchor="middle">L</text>
-          </g></g>
-          <g id="bootR" opacity="0"><g transform="translate(-16,-35.5)">
-            <path fill="#171a22" d="M5.2,33 L11,33 L10.6,39 L5.4,39 Z"/>
-            <path fill="#171a22" d="M11.5,33 Q20,34.6 33.8,33 Q34.6,34.4 33,35.2 L21,35.6 Q16,35.9 11.8,35 Z"/>
-            <path fill="url(#bootGradR)" stroke="#0f1117" stroke-width="1.1" d="M5,7 Q8,9 11,6.5 Q14,9 17,7 L17.3,22 Q17.5,25.5 21,26.5 Q27,27.5 31,29.5 Q34.5,31.3 33.8,33 L20,33 Q16,33.5 11.5,33 L5.5,33 Q4.8,33 4.9,31 Z"/>
-            <path fill="none" stroke="#ffdcb3" stroke-width="1" opacity="0.75" d="M6.5,12 Q11.5,10 16,12 M6.5,16.5 Q11.5,14.5 16,16.5 M11,6.8 L11,11 M18.5,28 Q21.5,26.2 24.5,27.8"/>
-            <path fill="none" stroke="#9a4d0f" stroke-width="1" opacity="0.5" d="M5.6,7.6 Q11,10.2 16.4,7.6"/>
-            <path fill="none" stroke="#ffffff" stroke-width="1.1" opacity="0.5" d="M29,30.2 Q31.4,30.9 32.6,32"/>
-            <text class="blab" y="3.5" font-size="9" font-weight="700" fill="#3a2008" text-anchor="middle">R</text>
-          </g></g>
+          <g id="bootL" opacity="0"></g>
+          <g id="bootR" opacity="0"></g>
+          <text id="bootLabL" font-size="10" font-weight="700" fill="#e8b0b0" text-anchor="middle" opacity="0">L</text>
+          <text id="bootLabR" font-size="10" font-weight="700" fill="#e6cba6" text-anchor="middle" opacity="0">R</text>
         </g>
         <g id="badgeL" opacity="0">
-          <rect rx="9" height="18" y="-13" fill="#12141c" stroke="#2dd4bf" stroke-width="1.5"/>
-          <text y="0" font-size="10" font-weight="700" fill="#2dd4bf" text-anchor="middle"></text>
+          <rect rx="9" height="18" y="-13" fill="#12141c" stroke="#d64545" stroke-width="1.5"/>
+          <text y="0" font-size="10" font-weight="700" fill="#d64545" text-anchor="middle"></text>
         </g>
         <g id="badgeR" opacity="0">
-          <rect rx="9" height="18" y="-13" fill="#12141c" stroke="#fb923c" stroke-width="1.5"/>
-          <text y="0" font-size="10" font-weight="700" fill="#fb923c" text-anchor="middle"></text>
+          <rect rx="9" height="18" y="-13" fill="#12141c" stroke="#c98f52" stroke-width="1.5"/>
+          <text y="0" font-size="10" font-weight="700" fill="#c98f52" text-anchor="middle"></text>
         </g>
         <g id="compass" transform="translate(464, 52)">
           <circle r="36" fill="#181b24" stroke="#2a2f3f"/>
@@ -479,6 +459,7 @@
 
 <script src="parser.js"></script>
 <script src="tempo.js"></script>
+<script src="boot3d.js"></script>
 <script>
 "use strict";
 
@@ -740,6 +721,15 @@ const elShadowL = document.getElementById("shadowL");
 const elShadowR = document.getElementById("shadowR");
 const elBootL = document.getElementById("bootL");
 const elBootR = document.getElementById("bootR");
+const elBootLabL = document.getElementById("bootLabL");
+const elBootLabR = document.getElementById("bootLabR");
+const BOOT_MESH = buildBootMesh();
+const BOOT_COLORS = {
+  L: { vamp: [182, 54, 54], shaft: [222, 80, 80], collar: [148, 38, 38],
+       sole: [34, 25, 20], opening: [206, 166, 118] },
+  R: { vamp: [128, 84, 44], shaft: [212, 158, 96], collar: [160, 114, 63],
+       sole: [30, 22, 14], opening: [212, 174, 124] }
+};
 const elContactL = document.getElementById("contactL");
 const elContactR = document.getElementById("contactR");
 const elImpactL = document.getElementById("impactL");
@@ -921,24 +911,26 @@ function placeFoot(f, shadow, contact, boot, s) {
   shadow.setAttribute("rx", 14 + 6 * s.lift);
   shadow.setAttribute("ry", 24 + 4 * s.lift);
 
-  // in 3D the cowboy boot takes over as the foot marker: the flat print
-  // fades to a placement ghost and the boot stands on it, flipping to face
-  // the toe's screen direction (with hysteresis so it doesn't flutter)
+  // in 3D a procedurally rendered cowboy boot takes over as the foot
+  // marker: the flat print fades to a placement ghost and the boot mesh is
+  // projected at the foot's true heading, so every angle just works
   const bootIn = Math.min(1, curSinTilt / 0.35); // 0 flat .. 1 fully booted
   f.g.setAttribute("opacity", 1 - 0.72 * bootIn);
+  const side = boot === elBootL ? "L" : "R";
+  const lab = side === "L" ? elBootLabL : elBootLabR;
   if (bootIn > 0.05) {
-    const bs = curSinTilt * VIEW3D.shaft / 10;
-    const sdir = Math.sin(rad);
-    let flip = +(boot.dataset.flip || 1);
-    if (Math.abs(sdir) > 0.15) flip = sdir >= 0 ? 1 : -1;
-    boot.dataset.flip = flip;
-    boot.setAttribute("transform",
-      "translate(" + sx + "," + (sy - liftUp) + ") scale(" + (bs * flip) + "," + bs + ")");
-    boot.setAttribute("opacity", 0.95 * bootIn);
-    const lab = boot.querySelector(".blab");
-    lab.setAttribute("transform", "translate(11.2,14) scale(" + flip + ",1)");
+    const bScale = VIEW3D.shaft / 17;
+    renderBoot3D(boot, BOOT_MESH, {
+      sx, sy, yaw: sa, liftPx: liftUp, scale: bScale,
+      tiltK: curTiltK, sinTilt: curSinTilt, colors: BOOT_COLORS[side]
+    });
+    boot.setAttribute("opacity", 0.97 * bootIn);
+    lab.setAttribute("x", sx);
+    lab.setAttribute("y", sy - liftUp - 38 * bScale * curSinTilt - 5);
+    lab.setAttribute("opacity", 0.9 * bootIn);
   } else {
     boot.setAttribute("opacity", 0);
+    lab.setAttribute("opacity", 0);
   }
 
   // pose shading: the raised part of the foot fades and drifts outward
