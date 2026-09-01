@@ -355,6 +355,7 @@
         <button id="btn-loop-sec" title="Repeat the current section">Loop section</button>
         <button id="btn-follow" title="Rotate the floor so forward is always up">Follow</button>
         <button id="btn-3d" title="Tilted perspective view with boots">3D</button>
+        <button id="btn-groove" title="Subtle human timing and sway; turn off for strict practice">Groove</button>
         <button id="btn-tick" title="Count clicks">Clicks</button>
         <div class="bpm">
           <span>Tempo</span>
@@ -705,6 +706,13 @@ const PROFILES = {
   stomp: {}                                                              // handled by the impact special case
 };
 
+// Deterministic per-step "humanizer": same beat + foot always grooves the
+// same way (no Math.random — reproducibility matters here).
+function grooveHash(seed, salt) {
+  const x = Math.sin(seed * 12.9898 + salt * 78.233) * 43758.5453;
+  return x - Math.floor(x);
+}
+
 function footState(foot, t) {
   const arr = kf[foot];
   const i = findIdx(arr, t);
@@ -713,8 +721,18 @@ function footState(foot, t) {
   const base = { x: prev.x, y: prev.y, a: prev.a, lift: poseLift(prev), pose: prev.pose, settled: true };
   if (!next) return base;
   const P = PROFILES[next.prof] || PROFILES.step;
-  const winScale = P.win || 1;
-  const arcAmp = P.arc === undefined ? 1 : P.arc;
+  let winScale = P.win || 1;
+  let arcAmp = P.arc === undefined ? 1 : P.arc;
+  let bow = 0;
+  if (state.groove) {
+    // hash on the landing's local beat so the groove repeats identically
+    // every pass through the dance (and across the loop seam)
+    const gb = ((next.t % TOTAL_BEATS) + TOTAL_BEATS) % TOTAL_BEATS;
+    const fs = foot === "L" ? 1 : 2;
+    winScale *= 0.91 + 0.18 * grooveHash(gb, fs);      // takeoff timing ±9% (landing untouched)
+    arcAmp *= 0.9 + 0.2 * grooveHash(gb, fs + 3);      // lift height ±10%
+    bow = (grooveHash(gb, fs + 7) - 0.5) * 0.1;        // slight curve in the travel path
+  }
   const win = Math.min(MOVE_WINDOW * winScale, (next.t - prev.t) * 0.9);
   const start = next.t - win;
   if (t < start) return base;
@@ -735,8 +753,18 @@ function footState(foot, t) {
     };
   }
   const sPos = P.pos ? P.pos(raw) : s;
-  const x = prev.x + (next.x - prev.x) * sPos;
-  const y = prev.y + (next.y - prev.y) * sPos;
+  let x = prev.x + (next.x - prev.x) * sPos;
+  let y = prev.y + (next.y - prev.y) * sPos;
+  if (bow) {
+    const dxT = next.x - prev.x, dyT = next.y - prev.y;
+    const d = Math.hypot(dxT, dyT);
+    if (d > 0.3) {
+      // perpendicular bow, zero at both endpoints so the landing is exact
+      const bs = bow * Math.min(1, d) * Math.sin(Math.PI * raw);
+      x += (-dyT / d) * bs;
+      y += (dxT / d) * bs;
+    }
+  }
   let lift = Math.max(Math.sin(Math.PI * s) * arcAmp, prevLift + (nextLift - prevLift) * s);
   if (P.snapLift) lift += P.snapLift * Math.sin(Math.PI * Math.pow(raw, 0.6));
   return {
@@ -762,6 +790,37 @@ function thetaAt(t) {
 
 function weightAt(t) {
   return weightKF[findIdx(weightKF, t)].foot;
+}
+
+// Groove-mode hip glow: instead of snapping between feet on the beat, the
+// weight leans a little toward the foot about to take it (anticipation) and
+// then flows across during the transfer — the sway a dancer's hips have.
+function glowPos(t, L, R) {
+  const i = findIdx(weightKF, t);
+  const cur = weightKF[i];
+  const nxt = weightKF[i + 1];
+  const posOf = f => (f === "L" ? L : R);
+  const curF = posOf(cur.foot);
+  let x = curF.x, y = curF.y;
+  const LEAN = 0.25, LEAD = 0.3, T = 0.35;
+  if (i > 0 && weightKF[i - 1].foot !== cur.foot) {
+    const age = t - cur.t;
+    if (age < T) {
+      // flow from the old foot (starting from the anticipation lean it
+      // already had) onto the new one
+      const pf = posOf(weightKF[i - 1].foot);
+      const s = LEAN + (1 - LEAN) * ease(Math.max(0, age) / T);
+      x = pf.x + (curF.x - pf.x) * s;
+      y = pf.y + (curF.y - pf.y) * s;
+    }
+  }
+  if (nxt && nxt.foot !== cur.foot && t > nxt.t - LEAD) {
+    const nf = posOf(nxt.foot);
+    const s = ease((t - (nxt.t - LEAD)) / LEAD) * LEAN;
+    x += (nf.x - x) * s;
+    y += (nf.y - y) * s;
+  }
+  return { x, y };
 }
 
 function eventAt(t) {
@@ -855,6 +914,7 @@ const state = {
   loopSection: false,
   loopFrom: 0,
   loopLen: 8,
+  groove: true,
   introCountdown: null,
   cam: { x: 0, y: 0 },
   camLag: 0,
@@ -962,7 +1022,7 @@ function render() {
   renderBadge("R", elBadgeR, R, t);
 
   const w = weightAt(t);
-  const wf = w === "L" ? L : R;
+  const wf = state.groove ? glowPos(t, L, R) : (w === "L" ? L : R);
   elGlow.setAttribute("cx", wf.x * SCALE);
   elGlow.setAttribute("cy", -wf.y * SCALE);
 
@@ -1490,6 +1550,7 @@ bindToggle("btn-loop-sec", "loopSection", () => {
 });
 bindToggle("btn-follow", "follow");
 bindToggle("btn-3d", "view3d");
+bindToggle("btn-groove", "groove");
 bindToggle("btn-tick", "ticks", () => {
   if (state.ticks) {
     if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
