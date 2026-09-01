@@ -902,9 +902,11 @@ function placeFoot(f, shadow, contact, boot, s) {
     "translate(" + sx + "," + (sy - liftUp) + ") scale(" + scale + "," + (scale * curTiltK) + ") rotate(" + sa + ")");
   shadow.setAttribute("transform",
     "translate(" + (sx + 4 * s.lift) + "," + (sy + 8 * s.lift * curTiltK) + ") scale(1," + curTiltK + ") rotate(" + sa + ")");
-  shadow.setAttribute("opacity", 0.15 + 0.25 * s.lift);
-  shadow.setAttribute("rx", 14 + 6 * s.lift);
-  shadow.setAttribute("ry", 24 + 4 * s.lift);
+  // a raised foot's shadow softens and shrinks (it does not darken — a heavy
+  // black blob under a lifted foot read as a hole in the floor)
+  shadow.setAttribute("opacity", 0.28 - 0.12 * s.lift);
+  shadow.setAttribute("rx", 14 - 3 * s.lift);
+  shadow.setAttribute("ry", 24 - 5 * s.lift);
 
   // boot shaft: a thin ankle column from the heel, only visible when tilted
   const shaftH = VIEW3D.shaft * curSinTilt + liftUp * 0.4;

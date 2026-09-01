@@ -24,6 +24,37 @@ const timer = setInterval(() => {
   }
   clearInterval(timer);
   try {
+    if (q.get('sheet') === 'walk') {
+      const walkSheet = `Walkabout Test
+Count: 32  Wall: 2  Level: Beginner
+
+SECTION 1: WALKS FORWARD, TOUCH, WALKS BACK, TOUCH
+1 2 Walk forward right, walk forward left
+3 4 Walk forward right, touch left beside right
+5 6 Walk back left, walk back right
+7 8 Walk back left, touch right beside left
+
+SECTION 2: SIDE STEPS RIGHT, SIDE STEPS LEFT
+1 2 Step right to right side, step left beside right
+3 4 Step right to right side, touch left beside right
+5 6 Step left to left side, step right beside left
+7 8 Step left to left side, touch right beside left
+
+SECTION 3: WALKS FORWARD, ROCK, WALKS BACK
+1 2 Walk forward right, walk forward left
+3 4 Walk forward right, walk forward left
+5 6 Rock forward right, recover on left
+7 8 Walk back right, walk back left
+
+SECTION 4: WALKS BACK, WALKS FORWARD, QUARTER TURN
+1 2 Walk back right, walk back left
+3 4 Rock back right, recover on left
+5 6 Walk forward right, walk forward left
+7 8 Step right forward, make 1/4 turn left (9:00)`;
+      const doc = w.document;
+      doc.getElementById('sheet-input').value = walkSheet;
+      doc.getElementById('btn-load').click();
+    }
     const patch = {};
     for (const k of ['tilt','shaft','liftPx','azimBase','azimGain','azimRate',
                      'tiltRate','speedGate','velSmooth','azimVmax']) {

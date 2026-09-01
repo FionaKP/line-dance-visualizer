@@ -170,3 +170,30 @@ offset is zero (sinTilt = 0) so nothing changes.
 only).
 
 **Verdict:** KEEP (lift + badge); tilt unchanged.
+
+## Iteration 6 — swing-direction experiment (negative) + honest shadows
+
+**Swing sign:** hypothesis — swinging *away* from travel keeps the travel
+vector lateral on screen (unsquished), so it might be more legible than the
+current swing-toward law. Measured total on-screen displacement of the dancer
+mid through the rumba box and the full wall for azimGain +22 vs -22:
+273 vs 276 px (section), 922 vs 919 px (wall). Informationally a wash — the
+camera leash, not the rotation, carries travel visibility. KEPT swing-toward
+(shows the dancer's leading side); recorded so nobody re-litigates the sign.
+
+**Touch poses under tilt:** added `?sheet=walk` to tuning/snap.html (loads the
+Walkabout Test sheet through the app's own paste panel). Touch stills at beats
+3.7/11.7 read correctly: toe down, faded raised heel, badge clear.
+
+**Shadows:** the lifted-foot shadow both grew and darkened with lift
+(0.15 + 0.25*lift, rx/ry growing) — physically backwards, and at high-res it
+read as a dark hole in the floor under every hook/touch. Changed to soften and
+shrink with lift (opacity 0.28 - 0.12*lift, rx 14-3*lift, ry 24-5*lift):
+grounded feet sit a touch heavier, raised feet leave a soft pool. The lift
+cue itself lives in the glyph-shadow gap, which is unchanged. 2D check
+(tilt=0 still): classic look, lift-as-size cue dominates as before.
+
+**Measurements:** view dynamics untouched; wall2/turns/hook suite identical.
+`node tests/run.js`: 74/74 (parser/tempo untouched, ran it anyway).
+
+**Verdict:** KEEP shadows; swing sign unchanged.
