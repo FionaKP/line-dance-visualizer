@@ -1121,9 +1121,14 @@ function renderImpact(foot, el, t) {
 }
 
 // Curved arrow around the dancer while facing changes over the last 1.5 beats.
+// While the camera still owes pan from a recent turn (the follow rotation
+// lags on purpose), the arc stays open from the camera's current heading and
+// visibly closes as the view comes around.
 function renderTurnArc(t, midX, midY) {
-  const th0 = thetaAt(t - 1.5);
+  const trail0 = thetaAt(t - 1.5);
   const th1 = thetaAt(t);
+  const trailDlt = th1 - trail0;
+  const th0 = Math.abs(th1 - state.viewTheta) > Math.abs(trailDlt) ? state.viewTheta : trail0;
   const dlt = th1 - th0;
   if (Math.abs(dlt) < 12) {
     elTurnArc.setAttribute("opacity", 0);
@@ -1157,9 +1162,11 @@ function renderTurnArc(t, midX, midY) {
   elTurnArc.setAttribute("opacity", alpha);
   elTurnArrow.setAttribute("opacity", alpha);
 
+  // the fraction label reads off the actual turn (trailing window), not the
+  // shrinking camera-debt arc — otherwise it would step down while the pan runs
   const near = [[90, "¼"], [180, "½"], [270, "¾"], [360, "full"]]
-    .find(([deg]) => Math.abs(Math.abs(dlt) - deg) < 30);
-  if (near && Math.abs(dlt) >= 60) {
+    .find(([deg]) => Math.abs(Math.abs(trailDlt) - deg) < 30);
+  if (near && Math.abs(trailDlt) >= 60) {
     const [lx, ly] = pt(lerpAngle(th0, th1, 0.5));
     const ox = lx - cx, oy = ly - cy;
     const om = Math.hypot(ox, oy) || 1;
