@@ -1,13 +1,19 @@
 <!DOCTYPE html>
 <!-- Headless-Chrome snapshot rig for perspective tuning (not part of the app).
-     Usage: /tuning/snap.html?beat=17.6&tilt=40&azim=18&zoom=1.8
-     Loads the app in an iframe, seeks with the given VIEW3D overrides, then
-     copies the floor SVG full-page so `chrome --headless --screenshot` can
-     rasterize a still. -->
+     Single still:  /tuning/snap.html?beat=17.6&tilt=40&azim=18&zoom=1.8
+     Filmstrip:     /tuning/snap.html?strip=16,0.5,12&rotVmax=90&zoom=1.4
+       (12 stills every 0.5 beats from beat 16, rendered off a deterministic
+        60fps fake-clock sim warmed 4 beats before the first still — so the
+        camera dynamics (viewTheta lag, azim, cam leash) are physically
+        consistent, unlike the old teleport-seek still.)
+     Sheets:        &sheet=walk (Walkabout Test) or &sheet=pivot (Pivot Test,
+        needs /tuning/simharness.js which defines it).
+     Loads the app in an iframe, then copies the floor SVG(s) full-page so
+     `chrome - -headless - -screenshot` can rasterize. Waits for SNAP_READY. -->
 <html>
 <body style="margin:0;background:#131722">
 <iframe id="app" src="/" style="width:1040px;height:900px;border:0;position:absolute;left:-2000px;top:0"></iframe>
-<div id="out"></div>
+<div id="out" style="display:flex;flex-wrap:wrap"></div>
 <div id="status" style="color:#666">waiting</div>
 <script>
 const q = new URLSearchParams(location.search);
@@ -23,9 +29,14 @@ const timer = setInterval(() => {
     return;
   }
   clearInterval(timer);
-  try {
-    if (q.get('sheet') === 'walk') {
-      const walkSheet = `Walkabout Test
+  const harness = w.document.createElement('script');
+  harness.src = '/tuning/simharness.js';
+  harness.onload = () => { try { run(w); } catch (e) { status.textContent = 'ERROR ' + e.message; } };
+  harness.onerror = () => { status.textContent = 'ERROR harness load'; };
+  w.document.head.appendChild(harness);
+}, 200);
+
+const walkSheet = `Walkabout Test
 Count: 32  Wall: 2  Level: Beginner
 
 SECTION 1: WALKS FORWARD, TOUCH, WALKS BACK, TOUCH
@@ -51,35 +62,75 @@ SECTION 4: WALKS BACK, WALKS FORWARD, QUARTER TURN
 3 4 Rock back right, recover on left
 5 6 Walk forward right, walk forward left
 7 8 Step right forward, make 1/4 turn left (9:00)`;
-      const doc = w.document;
-      doc.getElementById('sheet-input').value = walkSheet;
-      doc.getElementById('btn-load').click();
-    }
-    const patch = {};
-    for (const k of ['tilt','shaft','liftPx','azimBase','azimGain','azimRate',
-                     'tiltRate','speedGate','velSmooth','azimVmax']) {
-      if (q.get(k) !== null) patch[k] = +q.get(k);
-    }
-    const beat = +(q.get('beat') || 0);
-    const azim = q.get('azim');
-    w.eval('Object.assign(VIEW3D,' + JSON.stringify(patch) + ');' +
-           'seek(' + beat + ');' +
-           'state.effTilt = state.view3d ? VIEW3D.tilt : 0;' +
-           'state.azim = ' + (azim !== null ? +azim : 'VIEW3D.azimBase') + ';' +
-           'render();');
-    const svg = w.document.getElementById('floor').cloneNode(true);
-    const zoom = +(q.get('zoom') || 1);
+
+function run(w) {
+  const doc = w.document;
+  if (q.get('sheet') === 'walk') {
+    doc.getElementById('sheet-input').value = walkSheet;
+    doc.getElementById('btn-load').click();
+  } else if (q.get('sheet') === 'pivot') {
+    w.__loadPivotSheet();
+  }
+  const patch = {};
+  for (const k of ['tilt','shaft','liftPx','azimBase','azimGain','azimRate',
+                   'tiltRate','speedGate','velSmooth','azimVmax',
+                   'rotRate','rotVmax','rotHold','rotSettle','rotAccel']) {
+    if (q.get(k) !== null) patch[k] = +q.get(k);
+  }
+  w.eval('Object.assign(VIEW3D,' + JSON.stringify(patch) + ');');
+  const zoom = +(q.get('zoom') || 1);
+
+  const addShot = (svg, label, wpx, hpx) => {
+    svg = document.adoptNode(svg);
     if (zoom !== 1) {
       const wd = 520 / zoom, ht = 440 / zoom;
       svg.setAttribute('viewBox', (260 - wd / 2) + ' ' + (220 - ht / 2) + ' ' + wd + ' ' + ht);
     }
-    svg.setAttribute('width', '780'); svg.setAttribute('height', '660');
-    document.getElementById('out').appendChild(svg);
-    status.textContent = 'SNAP_READY';
-  } catch (e) {
-    status.textContent = 'ERROR ' + e.message;
+    svg.setAttribute('width', wpx); svg.setAttribute('height', hpx);
+    const cell = document.createElement('div');
+    cell.style.cssText = 'margin:2px;position:relative';
+    const cap = document.createElement('div');
+    cap.style.cssText = 'position:absolute;top:2px;left:6px;color:#9ad;font:13px monospace;z-index:2';
+    cap.textContent = label;
+    cell.appendChild(cap); cell.appendChild(svg);
+    document.getElementById('out').appendChild(cell);
+  };
+
+  if (q.get('strip') !== null) {
+    const [start, step, count] = q.get('strip').split(',').map(Number);
+    const targets = Array.from({length: count}, (_, i) => start + i * step);
+    w.eval('(function(){' +
+      'const targets=' + JSON.stringify(targets) + ';' +
+      'const orig=performance.now; let fake=orig.call(performance);' +
+      'performance.now=()=>fake;' +
+      'try{' +
+        'state.playing=false; lastFrameMs=null; seek(' + (start - 4) + '); lastFrameMs=null;' +
+        'const stepB=state.bpm/3600; let t=' + (start - 4) + '; let ti=0;' +
+        'window.__stripShots=[]; window.__stripMeta=[];' +
+        'while(ti<targets.length){' +
+          'fake+=1000/60; t+=stepB; state.t=t; render();' +
+          'if(t>=targets[ti]-1e-9){' +
+            'window.__stripShots.push(document.getElementById("floor").cloneNode(true));' +
+            'window.__stripMeta.push({t:+t.toFixed(2),th:+thetaAt(t).toFixed(0),vt:+state.viewTheta.toFixed(0)});' +
+            'ti++;}' +
+        '}' +
+      '}finally{performance.now=orig;}' +
+    '})()');
+    const shots = w.__stripShots, meta = w.__stripMeta;
+    for (let i = 0; i < shots.length; i++) {
+      addShot(shots[i], 'b' + meta[i].t + ' th' + meta[i].th + ' vt' + meta[i].vt, 346, 293);
+    }
+  } else {
+    const beat = +(q.get('beat') || 0);
+    const azim = q.get('azim');
+    w.eval('seek(' + beat + ');' +
+           'state.effTilt = state.view3d ? VIEW3D.tilt : 0;' +
+           'state.azim = ' + (azim !== null ? +azim : 'VIEW3D.azimBase') + ';' +
+           'render();');
+    addShot(doc.getElementById('floor').cloneNode(true), 'b' + beat, 780, 660);
   }
-}, 200);
+  status.textContent = 'SNAP_READY';
+}
 </script>
 </body>
 </html>

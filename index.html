@@ -518,6 +518,15 @@ const VIEW3D = {
   azimGain: 22,    // max extra side-angle swing from travel direction, deg
   azimRate: 0.03,  // per-frame ease toward the azimuth target (smaller = calmer)
   azimVmax: 14,    // deg/s cap on the side-angle drift (the "camera operator" speed limit)
+  rotRate: 0.15,   // per-frame proportional pull of the follow rotation toward the facing
+  rotVmax: 90,     // deg/s cap on the follow rotation — the boots turn on screen first,
+                   // the camera pans after them at an operator's pace (old law hit ~436)
+  rotHold: 0.12,   // fraction of rotVmax available while the facing is still turning:
+                   // the camera all but freezes so the turn reads in the boots
+  rotSettle: 0.6,  // beats the hold lingers after the facing stops moving, so a
+                   // multi-part turn (full pivot) reads as one phrase before the pan
+  rotAccel: 0.15,  // per-frame ease of the pan speed itself (1 = instant; <1 makes
+                   // the catch-up pan accelerate and brake like a hand on a tripod)
   tiltRate: 0.05,  // per-frame ease of the tilt toggle transition
   speedGate: 0.5,  // floor units/sec of travel before the side angle reacts
   velSmooth: 0.03, // per-frame smoothing of the travel velocity the azimuth sees
@@ -541,18 +550,23 @@ function azimuthTarget(svx, svy, speed) {
 // guessing: window.__viewStats.read() after some playback, .reset() between
 // experiments. Rotation rates in deg/s, camera speed in floor units/s.
 window.__viewStats = (() => {
-  let frames = 0, elapsed = 0, maxRot = 0, sumRot = 0, maxCam = 0, sumCam = 0;
+  let frames = 0, elapsed = 0, maxRot = 0, sumRot = 0, maxCam = 0, sumCam = 0,
+      maxFollow = 0, maxLag = 0;
   return {
-    tick(rotRate, camSpeed, dt) {
+    tick(rotRate, camSpeed, dt, followRate, lagErr) {
       frames++; elapsed += dt;
       maxRot = Math.max(maxRot, rotRate); sumRot += rotRate * dt;
       maxCam = Math.max(maxCam, camSpeed); sumCam += camSpeed * dt;
+      maxFollow = Math.max(maxFollow, followRate || 0);
+      maxLag = Math.max(maxLag, lagErr || 0);
     },
-    reset() { frames = 0; elapsed = 0; maxRot = 0; sumRot = 0; maxCam = 0; sumCam = 0; },
+    reset() { frames = 0; elapsed = 0; maxRot = 0; sumRot = 0; maxCam = 0; sumCam = 0;
+              maxFollow = 0; maxLag = 0; },
     read() {
       return { frames, elapsed: +elapsed.toFixed(2),
                maxRotRate: +maxRot.toFixed(1), avgRotRate: +(elapsed ? sumRot / elapsed : 0).toFixed(1),
-               maxCamSpeed: +maxCam.toFixed(2), avgCamSpeed: +(elapsed ? sumCam / elapsed : 0).toFixed(2) };
+               maxCamSpeed: +maxCam.toFixed(2), avgCamSpeed: +(elapsed ? sumCam / elapsed : 0).toFixed(2),
+               maxFollowRate: +maxFollow.toFixed(1), maxLagDeg: +maxLag.toFixed(1) };
     }
   };
 })();
@@ -756,7 +770,8 @@ const VIEW_CX = 260, VIEW_CY = 215;
 
 // per-frame view pose shared by render helpers
 let curRot = 0, curTiltK = 1, curSinTilt = 0;
-let velSm = { x: 0, y: 0 }, prevMid = null, lastFrameMs = null;
+let velSm = { x: 0, y: 0 }, prevMid = null, lastFrameMs = null, prevTheta = null,
+    lastTurnMs = null;
 
 // ---------------------------------------------------------------------------
 // Playback state
@@ -778,6 +793,8 @@ const state = {
   azim: 0,
   effTilt: 0,
   viewTheta: 0,
+  rotErr: 0,
+  rotVel: 0,
   lastBeatInt: -1
 };
 
@@ -828,14 +845,47 @@ function render() {
     state.cam.x += errX * pull;
     state.cam.y += errY * pull;
   }
-  state.viewTheta = lerpAngle(state.viewTheta, theta, 0.06);
+  // --- follow rotation: chase the dancer's facing like a camera operator.
+  // The boots rotate on screen first; the view pans after them, never faster
+  // than rotVmax deg/s. The error is tracked unwrapped so back-to-back turns
+  // in one direction (a full pivot) keep the pan going the same way instead
+  // of flipping around the "short" side. ---
+  const nowMs = performance.now();
+  const rawDt = lastFrameMs === null ? 1 / 60 : Math.min(0.1, (nowMs - lastFrameMs) / 1000);
+  const dt = rawDt > 0 ? rawDt : 1 / 60;
+  lastFrameMs = nowMs;
+  if (prevTheta === null) prevTheta = theta;
+  let dTh = theta - prevTheta;
+  prevTheta = theta;
+  dTh -= 360 * Math.round(dTh / 360); // loop-seam teleport, not a turn
+  const turning = Math.abs(dTh) / dt > 20; // the facing itself is in motion
+  state.rotErr += dTh;
+  // once the turn settles, never owe more than just over a half revolution:
+  // after a full pivot (err near 360) this takes the short way home instead of
+  // panning a full circle; mid-turn the error stays unwrapped so the pan never
+  // flips direction while the boots are still rotating
+  if (!turning && Math.abs(state.rotErr) > 200) state.rotErr -= 360 * Math.sign(state.rotErr);
+  if (turning) lastTurnMs = nowMs;
+  const holding = turning || (lastTurnMs !== null &&
+    (nowMs - lastTurnMs) / 1000 < VIEW3D.rotSettle * 60 / state.bpm);
+  const rotCap = VIEW3D.rotVmax * (holding ? VIEW3D.rotHold : 1);
+  // desired pan speed: proportional pull, clamped to the operator's cap; the
+  // actual speed eases toward it so pans start and stop without a kick
+  const rotGoal = Math.max(-rotCap, Math.min(rotCap, state.rotErr * VIEW3D.rotRate * 60));
+  state.rotVel += (rotGoal - state.rotVel) * VIEW3D.rotAccel;
+  let rotStep = state.rotVel * dt;
+  if (Math.abs(rotStep) > Math.abs(state.rotErr) && rotStep * state.rotErr > 0) {
+    rotStep = state.rotErr; state.rotVel = 0; // never glide past the target
+  }
+  state.rotErr -= rotStep;
+  let dVT = theta - state.rotErr - state.viewTheta;
+  dVT -= 360 * Math.round(dVT / 360); // ignore the loop seam's whole-turn renumber
+  const followRate = Math.abs(dVT) / dt;
+  state.viewTheta = theta - state.rotErr;
   const viewRot = state.follow ? -state.viewTheta : 0;
 
   // --- 3D view dynamics: tilt eases with the toggle, the side angle drifts
   // with the dancer's travel so movement reads in perspective ---
-  const nowMs = performance.now();
-  const dt = lastFrameMs === null ? 1 / 60 : Math.min(0.1, (nowMs - lastFrameMs) / 1000) || 1 / 60;
-  lastFrameMs = nowMs;
   state.effTilt += ((state.view3d ? VIEW3D.tilt : 0) - state.effTilt) * VIEW3D.tiltRate;
   curTiltK = Math.cos(state.effTilt * Math.PI / 180);
   curSinTilt = Math.sin(state.effTilt * Math.PI / 180);
@@ -859,8 +909,11 @@ function render() {
   const azCap = VIEW3D.azimVmax * dt;
   state.azim += Math.max(-azCap, Math.min(azCap, azStep));
   curRot = viewRot + state.azim;
-  window.__viewStats.tick(Math.abs(curRot - prevRot) / dt,
-                          Math.hypot(state.cam.x - camPX, state.cam.y - camPY) / dt, dt);
+  let dRot = curRot - prevRot;
+  dRot -= 360 * Math.round(dRot / 360); // a whole-revolution renumber is not motion
+  window.__viewStats.tick(Math.abs(dRot) / dt,
+                          Math.hypot(state.cam.x - camPX, state.cam.y - camPY) / dt, dt,
+                          followRate, Math.abs(state.rotErr));
 
   elWorld.setAttribute("transform",
     "translate(" + VIEW_CX + "," + VIEW_CY + ") scale(1," + curTiltK + ") rotate(" + curRot + ") " +
@@ -1262,6 +1315,10 @@ function seek(t) {
   state.camLag = 0;
   prevMid = null;
   velSm.x = 0; velSm.y = 0;
+  prevTheta = null;
+  lastTurnMs = null;
+  state.rotErr = 0;
+  state.rotVel = 0;
   state.viewTheta = thetaAt(state.t);
   render();
 }
