@@ -1,0 +1,14 @@
+Abbreviation Test
+Count: 16  Wall: 1  Level: Beginner
+
+S1: SIDES, EIGHTHS, STRUT
+1 - 2 Step R to right. Step L beside R.
+3 - 4 Step RF right. Step LF beside RF.
+5,6 Step forward on right toe (1), Drop heel taking weight (2)
+7,8 Step L forward, Turn 1/2 R
+
+S2: EIGHTH TURNS, WALKS
+1-2 Step 1/8 turn right on r. Walk forward l.
+3-4 Walk r. Walk l.
+5-6 Rock R to R. Recover on L.
+7-8 Cross rock right over left, recover on left with 3/8 turn right

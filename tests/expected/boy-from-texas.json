@@ -1,24 +1,100 @@
 {
-  "meta": { "ok": true, "walls": 4, "warnings": 3 },
+  "meta": {
+    "ok": true,
+    "walls": 4,
+    "warnings": 3,
+    "wallBeats": 32
+  },
   "events": [
-    { "beat": 0, "foot": "R", "dyMax": -0.5 },
-    { "beat": 1, "foot": "L", "badge": "DRAG", "lifted": true },
-    { "beat": 2.5, "foot": "R", "dx": 0.85, "dy": 0 },
-    { "beat": 3, "foot": "L", "dxMin": 0.1, "dyMin": 0.1 },
-    { "beat": 4, "foot": "R", "dx": 1.7 },
-    { "beat": 6, "foot": "L", "turn": -90 },
-    { "beat": 8, "foot": "R", "dyMax": -0.1 },
-    { "beat": 10.5, "foot": "R", "turn": 90, "dyMin": 0.5 },
-    { "beat": 13, "dx": null },
-    { "beat": 16, "foot": "R", "dyMin": 1 },
-    { "beat": 17, "weight": "L" },
-    { "beat": 18, "foot": "R", "turn": 180 },
-    { "beat": 21, "weight": "R" },
-    { "beat": 25, "foot": "L", "badge": "POINT", "lifted": true },
-    { "beat": 27, "foot": "R", "badge": "POINT", "lifted": true },
-    { "beat": 28, "foot": "R", "dxMax": -0.1, "dyMin": 0.1 },
-    { "beat": 30.5, "foot": "R", "turn": -90, "dyMax": -0.5 },
-    { "beat": 32, "foot": "R", "dyMax": -1 },
-    { "beat": 33, "weight": "L" }
+    {
+      "beat": 0,
+      "foot": "R",
+      "dyMax": -0.5
+    },
+    {
+      "beat": 1,
+      "foot": "L",
+      "badge": "DRAG",
+      "lifted": true
+    },
+    {
+      "beat": 2.5,
+      "foot": "R",
+      "dx": 0.85,
+      "dy": 0
+    },
+    {
+      "beat": 3,
+      "foot": "L",
+      "dxMin": 0.1,
+      "dyMin": 0.1
+    },
+    {
+      "beat": 4,
+      "foot": "R",
+      "dx": 1.7
+    },
+    {
+      "beat": 6,
+      "foot": "L",
+      "turn": -90
+    },
+    {
+      "beat": 8,
+      "foot": "R",
+      "dyMax": -0.1
+    },
+    {
+      "beat": 10.5,
+      "foot": "R",
+      "turn": 90,
+      "dyMin": 0.5
+    },
+    {
+      "beat": 13,
+      "dx": null
+    },
+    {
+      "beat": 16,
+      "foot": "R",
+      "dyMin": 1
+    },
+    {
+      "beat": 17,
+      "weight": "L"
+    },
+    {
+      "beat": 18,
+      "foot": "R",
+      "turn": 180
+    },
+    {
+      "beat": 21,
+      "weight": "R"
+    },
+    {
+      "beat": 25,
+      "foot": "L",
+      "badge": "POINT",
+      "lifted": true
+    },
+    {
+      "beat": 27,
+      "foot": "R",
+      "badge": "POINT",
+      "lifted": true
+    },
+    {
+      "beat": 28,
+      "foot": "R",
+      "dxMax": -0.1,
+      "dyMin": 0.1
+    },
+    {
+      "beat": 30.5,
+      "foot": "R",
+      "turn": -90,
+      "dyMax": -0.5
+    }
   ]
 }

@@ -1,0 +1,92 @@
+{
+  "meta": {
+    "ok": true,
+    "wallBeats": 16,
+    "walls": 2,
+    "warnings": 0
+  },
+  "events": [
+    {
+      "beat": 0,
+      "foot": "R",
+      "dyMin": 0.5
+    },
+    {
+      "beat": 0.5,
+      "foot": "L",
+      "badge": "LOCK",
+      "dxMin": 0.1,
+      "dyMax": -0.1
+    },
+    {
+      "beat": 1,
+      "foot": "R",
+      "dyMin": 0.5
+    },
+    {
+      "beat": 2,
+      "foot": "L",
+      "dyMax": -0.5
+    },
+    {
+      "beat": 3,
+      "foot": "R",
+      "badge": "LOCK",
+      "dxMax": -0.1,
+      "dyMin": 0.1
+    },
+    {
+      "beat": 4,
+      "foot": "R",
+      "badge": "TOE",
+      "lifted": true,
+      "dxMax": -0.1,
+      "dyMin": 0.1
+    },
+    {
+      "beat": 5,
+      "foot": "R",
+      "self": true,
+      "dx": 0,
+      "dy": 0
+    },
+    {
+      "beat": 6,
+      "foot": "L",
+      "badge": "TOE",
+      "lifted": true,
+      "dyMax": -0.5
+    },
+    {
+      "beat": 7,
+      "foot": "L",
+      "self": true,
+      "dx": 0,
+      "dy": 0
+    },
+    {
+      "beat": 9,
+      "foot": "R",
+      "badge": "FLICK",
+      "lifted": true,
+      "dyMax": -0.3
+    },
+    {
+      "beat": 10,
+      "foot": "R",
+      "badge": "BOUNCE",
+      "self": true,
+      "turn": 90
+    },
+    {
+      "beat": 13,
+      "foot": "R",
+      "badge": "DRAG",
+      "lifted": true
+    },
+    {
+      "beat": 15,
+      "turn": 90
+    }
+  ]
+}

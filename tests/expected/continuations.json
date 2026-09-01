@@ -1,0 +1,18 @@
+{
+  "meta": { "ok": true, "wallBeats": 16, "walls": 2, "warnings": 0 },
+  "events": [
+    { "beat": 0, "foot": "L", "dx": -1.7, "dy": 0 },
+    { "beat": 0.5, "foot": "R", "dx": 0.85, "dy": 0 },
+    { "beat": 1, "foot": "L", "dyMin": 0.5 },
+    { "beat": 2.5, "foot": "L", "dx": -0.85, "dy": 0 },
+    { "beat": 3, "foot": "R", "dyMax": -0.5 },
+    { "beat": 4, "foot": "R", "badge": "JUMP", "dyMin": 0.5 },
+    { "beat": 4, "foot": "L", "badge": "JUMP", "dy": 0 },
+    { "beat": 6, "foot": "R", "badge": "JUMP", "dyMax": -0.5 },
+    { "beat": 8, "foot": "L", "dxMin": 0.1, "dyMin": 0.1 },
+    { "beat": 9, "weight": "R" },
+    { "beat": 11, "foot": "R", "turn": -180, "dx": 1.7 },
+    { "beat": 13, "foot": "R", "dyMin": 0.5 },
+    { "beat": 15, "weight": "R" }
+  ]
+}
