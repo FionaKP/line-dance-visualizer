@@ -516,6 +516,8 @@ const VIEW3D = {
   azimVmax: 14,    // deg/s cap on the side-angle drift (the "camera operator" speed limit)
   tiltRate: 0.05,  // per-frame ease of the tilt toggle transition
   speedGate: 0.5,  // floor units/sec of travel before the side angle reacts
+  velSmooth: 0.03, // per-frame smoothing of the travel velocity the azimuth sees
+                   // (slow on purpose: rock-recovers cancel out, walks register)
 };
 for (const [k, v] of new URLSearchParams(location.search)) {
   if (k in VIEW3D && v !== "" && !isNaN(+v)) VIEW3D[k] = +v;
@@ -825,8 +827,8 @@ function render() {
   curTiltK = Math.cos(state.effTilt * Math.PI / 180);
   curSinTilt = Math.sin(state.effTilt * Math.PI / 180);
   if (prevMid) {
-    velSm.x += ((midX - prevMid.x) / dt - velSm.x) * 0.08;
-    velSm.y += ((midY - prevMid.y) / dt - velSm.y) * 0.08;
+    velSm.x += ((midX - prevMid.x) / dt - velSm.x) * VIEW3D.velSmooth;
+    velSm.y += ((midY - prevMid.y) / dt - velSm.y) * VIEW3D.velSmooth;
   }
   prevMid = { x: midX, y: midY };
   // travel direction in the view frame (before the azimuth, so it can't feed
