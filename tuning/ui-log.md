@@ -35,3 +35,32 @@ A/B'd live via CSS-var overrides before touching source:
 Verdict: **A2 wins.** Warm espresso base, warm off-white text, turquoise
 accent. Committed as the token change plus the slab-serif display stack
 (Rockwell / 'Iowan Old Style' / Georgia) for headings and the count numeral.
+
+## Iteration 2 — wood-plank floor
+
+Hypothesis: the blue graph-paper grid is the least floor-like thing on the
+page; a dark-walnut plank pattern whose boards are exactly one floor unit
+(50px) tall can *be* the beat grid in one axis, with a faint overlay line
+keeping the cross axis readable.
+
+Change: `#wood` pattern in the SVG defs — 250×200 tile, four 50px board
+rows, tileable wavy grain strokes, 1px top-edge highlights, 2px long seams,
+staggered butt joints; the old `#grid` pattern demoted to a faint warm
+cross-axis overlay. Warmed the weight glow to lamp-light (`#ffe3b0`) and
+added a screen-space radial vignette between the world and dancer layers so
+the floor edges fall away without dimming the boots.
+
+- Screenshot v1 (tilted, at rest): read as **brick wall**, not floorboards —
+  butt joints were as heavy as the long seams and every board in a row was
+  the same tone. Fix: joints at 1px/0.55 opacity vs 2px seams, plus
+  per-board tone rects between joints.
+- Screenshot v2 (tilted, at rest): reads as a wood floor; boots, glow and
+  badges keep strong contrast.
+- Screenshot v3 (flat 2D, mid-dance at count 3&4): planks at the follow
+  rotation angle still read as floor; foot prints and trails clear.
+- Screenshot v4 (3D tilt, mid-turn at beat 10.6, floor rotated −122°): the
+  turquoise turn arc pops against the walnut; grain does not shimmer or
+  alias at odd angles.
+
+Verdict: keep. Boards-as-beat-grid works; the faint overlay carries the
+other axis.

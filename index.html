@@ -288,16 +288,78 @@
     <div class="card">
       <svg id="floor" viewBox="0 0 520 440">
         <defs>
+          <!-- wood-plank floor. Boards are 50px tall — one floor unit — so the
+               long seams double as the beat grid's rows; a faint overlay grid
+               keeps the cross-axis readable. Drawn dark-walnut so the red/tan
+               boots, trails and glow stay high-contrast on top. -->
+          <pattern id="wood" width="250" height="200" patternUnits="userSpaceOnUse">
+            <rect width="250" height="50" fill="#43301d"/>
+            <rect y="50" width="250" height="50" fill="#4a3421"/>
+            <rect y="100" width="250" height="50" fill="#3f2c1a"/>
+            <rect y="150" width="250" height="50" fill="#473320"/>
+            <!-- individual boards vary in tone so the floor reads as boards,
+                 not brick: shade the stretch between some butt joints -->
+            <rect x="40" width="125" height="50" fill="#463322"/>
+            <rect x="115" y="50" width="125" height="50" fill="#44301c"/>
+            <rect x="75" y="100" width="125" height="50" fill="#45311f"/>
+            <rect x="10" y="150" width="125" height="50" fill="#413019"/>
+            <!-- grain: shallow horizontal waves, tileable left-to-right -->
+            <g fill="none" stroke="#2c1e0f" stroke-width="1" opacity="0.5">
+              <path d="M0,14 C40,11 80,17 125,14 C170,11 210,17 250,14"/>
+              <path d="M0,33 C50,36 90,30 140,34 C190,37 220,31 250,33"/>
+              <path d="M0,63 C45,66 95,60 150,64 C200,67 230,61 250,63"/>
+              <path d="M0,86 C35,83 85,89 130,85 C180,82 215,88 250,86"/>
+              <path d="M0,116 C55,113 100,119 145,115 C195,112 225,118 250,116"/>
+              <path d="M0,138 C40,141 90,135 135,139 C185,142 220,136 250,138"/>
+              <path d="M0,165 C45,162 95,168 140,164 C190,161 225,167 250,165"/>
+              <path d="M0,187 C50,190 100,184 150,188 C200,191 230,185 250,187"/>
+            </g>
+            <!-- soft top-edge highlight on each board -->
+            <g stroke="#e8c890" stroke-width="1" opacity="0.05">
+              <line x1="0" y1="1" x2="250" y2="1"/>
+              <line x1="0" y1="51" x2="250" y2="51"/>
+              <line x1="0" y1="101" x2="250" y2="101"/>
+              <line x1="0" y1="151" x2="250" y2="151"/>
+            </g>
+            <!-- long seams between boards -->
+            <g stroke="#241708" stroke-width="2">
+              <line x1="0" y1="0" x2="250" y2="0"/>
+              <line x1="0" y1="50" x2="250" y2="50"/>
+              <line x1="0" y1="100" x2="250" y2="100"/>
+              <line x1="0" y1="150" x2="250" y2="150"/>
+            </g>
+            <!-- staggered butt joints: lighter than the long seams so the
+                 boards read long, not brick-like -->
+            <g stroke="#241708" stroke-width="1" opacity="0.55">
+              <line x1="40" y1="0" x2="40" y2="50"/>
+              <line x1="165" y1="0" x2="165" y2="50"/>
+              <line x1="115" y1="50" x2="115" y2="100"/>
+              <line x1="240" y1="50" x2="240" y2="100"/>
+              <line x1="75" y1="100" x2="75" y2="150"/>
+              <line x1="200" y1="100" x2="200" y2="150"/>
+              <line x1="10" y1="150" x2="10" y2="200"/>
+              <line x1="135" y1="150" x2="135" y2="200"/>
+            </g>
+          </pattern>
+          <!-- faint cross-axis beat grid over the boards -->
           <pattern id="grid" width="50" height="50" patternUnits="userSpaceOnUse">
-            <path d="M 50 0 L 0 0 0 50" fill="none" stroke="#232838" stroke-width="1"/>
+            <path d="M 50 0 L 0 0 0 50" fill="none" stroke="#1d130a" stroke-width="1" opacity="0.45"/>
           </pattern>
           <radialGradient id="weightGlow">
-            <stop offset="0%" stop-color="#ffffff" stop-opacity="0.22"/>
-            <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+            <stop offset="0%" stop-color="#ffe3b0" stop-opacity="0.26"/>
+            <stop offset="100%" stop-color="#ffe3b0" stop-opacity="0"/>
+          </radialGradient>
+          <!-- screen-space vignette: darkens the floor's edges (not the
+               dancer, which draws above it) so the action stays the focus -->
+          <radialGradient id="floorVin" cx="50%" cy="48%" r="68%">
+            <stop offset="0%" stop-color="#120b06" stop-opacity="0"/>
+            <stop offset="62%" stop-color="#120b06" stop-opacity="0"/>
+            <stop offset="100%" stop-color="#120b06" stop-opacity="0.5"/>
           </radialGradient>
         </defs>
-        <rect width="520" height="440" fill="#131722"/>
+        <rect width="520" height="440" fill="#241708"/>
         <g id="world">
+          <rect x="-3000" y="-3000" width="6000" height="6000" fill="url(#wood)"/>
           <rect x="-3000" y="-3000" width="6000" height="6000" fill="url(#grid)"/>
           <path id="turn-arc" fill="none" stroke="#4fb3a9" stroke-width="3" stroke-dasharray="7 6" stroke-linecap="round" opacity="0"/>
           <path id="turn-arrow" fill="#4fb3a9" opacity="0"/>
@@ -310,6 +372,7 @@
           <circle id="impactL" fill="none" stroke="#d64545" stroke-width="3" opacity="0"/>
           <circle id="impactR" fill="none" stroke="#c98f52" stroke-width="3" opacity="0"/>
         </g>
+        <rect width="520" height="440" fill="url(#floorVin)"/>
         <!-- dancer layer: drawn in screen space so lift and boot shafts can
              rise vertically on screen while the tilted floor stays flat -->
         <g id="dancer">
