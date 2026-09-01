@@ -1,7 +1,7 @@
 # line-dance-visualizer
 
-Single-page app that animates a line dancer's feet from a CopperKnob
-stepsheet. No build step, no dependencies.
+Single-page app that animates a line dancer's feet from a stepsheet
+(CopperKnob-style text). No build step, no dependencies.
 
 - `index.html` — UI, timeline/keyframe builder, SVG renderer, playback,
   YouTube music sync. All vanilla JS.
@@ -9,8 +9,12 @@ stepsheet. No build step, no dependencies.
   the page as a global script; also `require()`-able from Node for tests.
 - `tempo.js` — `gridFromWave`: BPM + first-beat detection from a low-passed
   waveform. Same dual browser/Node loading.
-- `server.py` — static file server + CopperKnob search/stepsheet proxy +
-  YouTube audio fetch. Run with `python3 server.py`, port 8123.
+- `sources.py` — per-site stepsheet scrapers (CopperKnob, Linedancer)
+  behind a `SOURCES` registry; each source does search + fetch_sheet and
+  normalizes sheets to CopperKnob-ish text the parser understands.
+- `server.py` — static file server + stepsheet search/fetch proxy (routes
+  to `sources.py`) + YouTube audio fetch. Run with `python3 server.py`,
+  port 8123 (override with the PORT env var).
 
 ## Rules
 

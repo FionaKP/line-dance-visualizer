@@ -400,12 +400,17 @@
 
     <div>
       <div class="card search">
-        <h2>Find a dance on CopperKnob</h2>
+        <h2>Find a dance</h2>
         <div class="search-row">
           <input type="text" id="search-q" placeholder="Song, artist, or dance name..">
           <button class="primary" id="btn-search">Search</button>
         </div>
         <div class="search-row filters">
+          <select id="search-source" title="Which stepsheet site to search">
+            <option value="copperknob" selected>CopperKnob</option>
+            <option value="linedancerweb">Linedancer</option>
+            <option value="all">All sites</option>
+          </select>
           <select id="search-level">
             <option value="">Any level</option>
             <option>Absolute Beginner</option>
@@ -1957,34 +1962,67 @@ elStartTime.addEventListener("change", () => {
   saveMusicPrefs();
 });
 
-// --- CopperKnob search (through the local server's proxy endpoints) -------
+// --- Stepsheet search (through the local server's per-site scrapers) ------
 
 const elSearchStatus = document.getElementById("search-status");
 const elSearchResults = document.getElementById("search-results");
+const elSearchSource = document.getElementById("search-source");
+
+// which filters each source's search honors ("all" = the shared subset)
+const SOURCE_FILTERS = {
+  copperknob: ["level", "wall", "count", "lang"],
+  linedancerweb: ["level", "wall"],
+  all: ["level", "wall"]
+};
+const SOURCE_LABELS = { copperknob: "CopperKnob", linedancerweb: "Linedancer" };
+const FILTER_ELS = {
+  level: document.getElementById("search-level"),
+  wall: document.getElementById("search-wall"),
+  count: [document.getElementById("search-count-from"), document.getElementById("search-count-to")],
+  lang: document.getElementById("search-lang")
+};
+
+function updateFilterVisibility() {
+  const supported = SOURCE_FILTERS[elSearchSource.value] || [];
+  for (const [name, els] of Object.entries(FILTER_ELS)) {
+    for (const el of [].concat(els)) el.style.display = supported.includes(name) ? "" : "none";
+  }
+}
+elSearchSource.addEventListener("change", updateFilterVisibility);
+updateFilterVisibility();
 
 async function runSearch() {
   const q = document.getElementById("search-q").value.trim();
   if (!q) { elSearchStatus.textContent = "Type a song, artist, or dance name first."; return; }
+  const source = elSearchSource.value;
   const params = new URLSearchParams({
     q,
+    source,
     level: document.getElementById("search-level").value,
     wall: document.getElementById("search-wall").value,
     count_from: document.getElementById("search-count-from").value,
     count_to: document.getElementById("search-count-to").value,
     lang: document.getElementById("search-lang").value
   });
-  elSearchStatus.textContent = "Searching CopperKnob…";
+  elSearchStatus.textContent = "Searching " +
+    (source === "all" ? "all sites" : SOURCE_LABELS[source] || source) + "…";
   elSearchResults.innerHTML = "";
   try {
     const r = await fetch("/api/search?" + params);
     const data = await r.json();
     if (data.error) throw new Error(data.error);
-    if (!data.results.length) { elSearchStatus.textContent = "No dances found."; return; }
-    elSearchStatus.textContent = data.results.length + " result" + (data.results.length === 1 ? "" : "s");
+    if (!data.results.length) {
+      elSearchStatus.textContent = "No dances found." +
+        (data.errors ? " (" + data.errors.join("; ") + ")" : "");
+      return;
+    }
+    elSearchStatus.textContent = data.results.length + " result" + (data.results.length === 1 ? "" : "s") +
+      (data.errors ? " — some sites failed: " + data.errors.join("; ") : "");
     for (const res of data.results) {
       const div = document.createElement("div");
       div.className = "result";
       const sub = [];
+      if (source === "all" && res.source) sub.push(SOURCE_LABELS[res.source] || res.source);
       if (res.count) sub.push(res.count + " count");
       if (res.wall) sub.push(res.wall + " wall");
       if (res.level) sub.push(res.level);
