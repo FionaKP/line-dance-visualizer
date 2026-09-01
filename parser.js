@@ -467,6 +467,11 @@ function parseStepsheet(text) {
       }
       // partner sheets: strip a role prefix and dance that role's part
       desc = desc.replace(/^(?:man|men|gents?|lady|ladies|woman)\s*:\s*/i, "");
+      // "1 Restart: Wall 4 after 32Cs": an annotation, not a counted step
+      if (/^[*#]*\s*(?:tags?|restarts?)\b/i.test(desc)) {
+        warn("Tags/restarts are not supported yet: \"" + desc + "\"");
+        continue;
+      }
 
       // "32 Count Intro" / "16 count intro - as danced in ..." is the intro
       // length, not a step line
@@ -627,6 +632,17 @@ function parseStepsheet(text) {
       if (turnCount === 1 && steps.length === 3 && steps.every(s => s.kind.startsWith("shuffle"))) {
         const deg = steps.find(s => s.turn).turn;
         for (const s of steps) s.turn = deg / 3;
+      }
+
+      // "(2x)" / "x2" on a line repeats its steps that many times
+      const xm = desc.match(/\(\s*(\d+)\s*x\s*\)|\(\s*x\s*(\d+)\s*\)/i);
+      if (xm && steps.length) {
+        const times = +(xm[1] || xm[2]);
+        const consuming0 = steps.filter(st => !st.sameBeat).length;
+        if (times > 1 && times < 9 && consuming0 * times <= tokens.length) {
+          const copy = JSON.parse(JSON.stringify(steps));
+          for (let r = 1; r < times; r++) steps.push(...JSON.parse(JSON.stringify(copy)));
+        }
       }
 
       // "march in place for 8 counts" fills the line's counts with
