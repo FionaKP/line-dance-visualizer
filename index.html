@@ -1429,6 +1429,7 @@ function loadDance(parsed, url) {
   loadMusicPrefs();
   seek(0);
   setPlaying(false);
+  autoSetupMusic();
 }
 
 // ---------------------------------------------------------------------------
@@ -1701,6 +1702,37 @@ function selectVideo(videoId, title) {
   });
 }
 
+// Rank YouTube results for sync-friendliness: lyric/audio uploads start the
+// song immediately, while official music videos usually open with an
+// artistic intro that throws off the count. Auto-generated "- Topic"
+// channels are the full studio track.
+function rankMusicResults(results) {
+  const score = res => {
+    const t = (res.title || "").toLowerCase();
+    const ch = (res.channel || "").toLowerCase();
+    let s = 0;
+    if (/\blyrics?\b/.test(t)) s += 30;
+    if (/\bofficial (audio|lyric)/.test(t)) s += 25;
+    else if (/\baudio\b/.test(t)) s += 20;
+    if (/\bvisuali[sz]er\b/.test(t)) s += 14;
+    if (ch.endsWith(" - topic")) s += 28;
+    if (/\bofficial (music )?video\b/.test(t)) s -= 25;
+    else if (/\bmusic video\b/.test(t)) s -= 20;
+    if (/\b(live|acoustic|cover|remix|sped ?up|slowed|reverb|karaoke|instrumental|8d)\b/.test(t)) s -= 30;
+    if (/\b(line ?dance|dance demo|demo|tutorial|teach|choreo|walk ?through|count)\b/.test(t)) s -= 35;
+    if (/\b(reaction|shorts?|mashup|medley|mix)\b/.test(t)) s -= 40;
+    const m = /^(\d+):(\d{2})(?::(\d{2}))?$/.exec(res.length || "");
+    if (m) {
+      const sec = m[3] ? +m[1] * 3600 + +m[2] * 60 + +m[3] : +m[1] * 60 + +m[2];
+      if (sec > 480 || sec < 90) s -= 25;
+    }
+    return s;
+  };
+  return results.map((r, i) => ({ r, i, s: score(r) }))
+    .sort((a, b) => b.s - a.s || a.i - b.i)
+    .map(x => x.r);
+}
+
 async function searchMusic() {
   const q = document.getElementById("music-q").value.trim();
   if (!q) { musicStatus("Type a song name first."); return []; }
@@ -1711,7 +1743,8 @@ async function searchMusic() {
     const data = await r.json();
     if (data.error) throw new Error(data.error);
     if (!data.results.length) { musicStatus("No videos found."); return []; }
-    musicStatus(data.results.length + " videos");
+    data.results = rankMusicResults(data.results);
+    musicStatus(data.results.length + " videos (lyric/audio uploads listed first)");
     for (const res of data.results) {
       const div = document.createElement("div");
       div.className = "result";
@@ -1899,11 +1932,30 @@ async function autoMatchMusic() {
   try {
     const a = await analyzeAudio(chosen.videoId, musicStatus);
     music.analysis = a;
-    musicStatus("Matched “" + chosen.title.slice(0, 40) + "”: " + applyMusicAnalysis(a, cue, cueHit));
+    setSynced(true);
+    musicStatus("Matched “" + chosen.title.slice(0, 40) + "”: " + applyMusicAnalysis(a, cue, cueHit) + " — steps synced, press Play.");
   } catch (err) {
-    if (cueHit) musicStatus("Audio analysis failed (" + err.message + "), fell back to captions: " + applyCueHit(cueHit, cue));
-    else musicStatus("Audio analysis failed: " + err.message + ". Use Tap tempo and Set to now.");
+    if (cueHit) {
+      setSynced(true);
+      musicStatus("Audio analysis failed (" + err.message + "), fell back to captions: " + applyCueHit(cueHit, cue) + " — steps synced.");
+    } else {
+      musicStatus("Audio analysis failed: " + err.message + ". Use Tap tempo and Set to now.");
+    }
   }
+}
+
+// Default experience: when a dance loads, the music comes ready — a video
+// picked (lyric/audio preferred), tempo measured from its audio, count 1
+// aligned, and the steps driven by the video. Saved prefs short-circuit the
+// search; any failure just leaves the dance usable unsynced.
+let autoSetupSeq = 0;
+async function autoSetupMusic() {
+  const seq = ++autoSetupSeq;              // a newer loadDance cancels this one
+  if (music.videoId) { setSynced(true); return; }   // restored saved video
+  if (!document.getElementById("music-q").value.trim()) return;
+  await new Promise(r => setTimeout(r, 400));       // let the first render land
+  if (seq !== autoSetupSeq) return;
+  await autoMatchMusic();
 }
 
 function setSynced(on) {
