@@ -511,7 +511,7 @@ const CAM_MAX_LEAD = 1.6;   // units the dancer may drift off-center before the 
 // space. Every value here is tunable from the URL (?tilt=40&azimGain=30) so
 // perspective experiments don't need code edits.
 const VIEW3D = {
-  tilt: 32,        // deg the camera leans away from straight-down
+  tilt: 35,        // deg the camera leans away from straight-down
   shaft: 20,       // boot shaft height in px at full tilt
   liftPx: 32,      // px a fully lifted foot rises at full tilt
   azimBase: 12,    // resting side angle, deg (0 = dead-on from above/behind)
@@ -729,9 +729,9 @@ const elBootLabR = document.getElementById("bootLabR");
 const BOOT_MESH = buildBootMesh();
 const BOOT_COLORS = {
   L: { vamp: [182, 54, 54], shaft: [222, 80, 80], collar: [148, 38, 38],
-       sole: [34, 25, 20], opening: [206, 166, 118] },
+       sole: [34, 25, 20], lining: [206, 166, 118], opening: [64, 44, 30] },
   R: { vamp: [128, 84, 44], shaft: [212, 158, 96], collar: [160, 114, 63],
-       sole: [30, 22, 14], opening: [212, 174, 124] }
+       sole: [30, 22, 14], lining: [212, 174, 124], opening: [70, 48, 32] }
 };
 const elContactL = document.getElementById("contactL");
 const elContactR = document.getElementById("contactR");
@@ -929,7 +929,7 @@ function placeFoot(f, shadow, contact, boot, s) {
   const side = boot === elBootL ? "L" : "R";
   const lab = side === "L" ? elBootLabL : elBootLabR;
   if (bootIn > 0.05) {
-    const bScale = VIEW3D.shaft / 17;
+    const bScale = VIEW3D.shaft / 14;
     renderBoot3D(boot, BOOT_MESH, {
       sx, sy, yaw: sa, liftPx: liftUp, scale: bScale,
       tiltK: curTiltK, sinTilt: curSinTilt, colors: BOOT_COLORS[side]

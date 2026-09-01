@@ -22,7 +22,7 @@ function buildBootMesh() {
   const soleZ = x => x <= -8 ? 3 : Math.max(0, 3 * (2 - x) / 10);
   // foot/vamp: cross-section rings along the sole — [x, half-width, height]
   const sect = [
-    [-15, 6.5, 9], [-7, 7.5, 11], [1, 7.5, 8.5], [9, 8, 7.5], [17, 6.8, 5.5], [26, 3.2, 2.5]
+    [-15, 6.5, 9], [-7, 7.5, 11], [1, 7.5, 8.5], [9, 8, 7.5], [18, 7, 5.5], [25, 5, 3.5], [31, 2.6, 2]
   ];
   const ring = ([x, w, h]) => {
     const z = soleZ(x);
@@ -65,7 +65,12 @@ function buildBootMesh() {
   };
   tube(lo, mid, "shaft");
   tube(mid, hi, "collar");
-  faces.push({ pts: hi.slice().reverse(), role: "opening" });
+  // hollow opening: rim lip -> inner lining wall descending -> dark floor
+  const hin = circ(z1 - 0.6, 6.1, 5.1, true);
+  const inn = circ(z1 - 8, 5.7, 4.7);
+  tube(hi, hin, "collar");
+  tube(hin, inn, "lining");
+  faces.push({ pts: inn.slice().reverse(), role: "opening" });
   return faces;
 }
 
