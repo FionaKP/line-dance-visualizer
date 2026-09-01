@@ -197,3 +197,35 @@ cue itself lives in the glyph-shadow gap, which is unchanged. 2D check
 `node tests/run.js`: 74/74 (parser/tempo untouched, ran it anyway).
 
 **Verdict:** KEEP shadows; swing sign unchanged.
+
+## Final state (after 6 iterations)
+
+VIEW3D: tilt 32, shaft 20, liftPx 32, azimBase 12, azimGain 22, azimRate 0.03,
+tiltRate 0.05, speedGate 0.5, velSmooth 0.03, azimVmax 14.
+
+Final deterministic numbers (60fps sim, warm 4 beats, wrap excluded):
+
+- Choosin' Texas full loop (beats 4-95): maxRot 209.0 / avgRot 33.2,
+  maxCam 2.97 / avgCam 0.76, maxAzim 14.0 / avgAzim 6.1, azim [-1.8, 27.2]
+- Choosin' Texas wall 2: maxAzim 14.0 (baseline 23.2), azim range 25.6 deg
+  (baseline 17.8), avgRot 33.0 (baseline 32.1)
+- Walkabout wall 2: maxRot 230.8 (the wall quarter-turn), avgRot 8.3,
+  maxAzim 14.0, azim [1.1, 30.6], feet always in x 200-316 / y 160-277
+
+Remaining maxRot peaks are the pre-existing follow-rotation on the dance's own
+half/quarter turns (shared with 2D, owner-tuned in f5c321e); the azimuth law
+is capped at 14 deg/s everywhere.
+
+## What I'd try next
+
+- The wrap teleport at loop end (t=96 -> 0) spikes maxCamSpeed to ~10 u/s;
+  a short camera cross-fade or snap-with-fade at the loop seam would clean up
+  the one remaining jolt (pre-existing, not 3D-specific).
+- A gentle deg/s cap on the follow-rotation whip during half turns (~209
+  deg/s peak) IF the owner wants turns calmer in 3D; needs care since it is
+  shared with the 2D view and lag makes facing read wrong.
+- Boot shaft anchor is screen-vertical from the heel; at steep foot angles it
+  hugs the glyph edge (visible in the skate stills). A 1-2px anchor nudge
+  toward the glyph centroid would seat it better.
+- The snap rig (tuning/snap.html) can grow a filmstrip mode (N stills at
+  fixed beat intervals in one page) for judging motion continuity visually.
