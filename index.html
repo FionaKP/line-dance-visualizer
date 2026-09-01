@@ -849,6 +849,49 @@ const PROFILES = {
   stomp: {}                                                              // handled by the impact special case
 };
 
+// ---------------------------------------------------------------------------
+// Boot attitude: how the 3D boot physically angles for special moves.
+// pitch > 0 = toe down, pitch < 0 = rocked back on the heel; roll/yawOff in
+// degrees. anchor names the foot-local point that must stay planted on the
+// floor ("toe" tip, "heel" corner); airborne moves rotate about the ankle.
+// Only the 3D boot consumes this — the 2D glyph language is untouched.
+// ---------------------------------------------------------------------------
+function kfAttitude(k, foot) {
+  if (!k) return null;
+  const sgn = foot === "R" ? 1 : -1; // mirror side-dependent moves
+  if (k.pose === "heel") return { pitch: -30, roll: 0, yawOff: 0, bend: 0.55, anchor: "heel" };
+  if (k.pose === "toe")  return { pitch: 42, roll: 0, yawOff: 0, bend: 0.3, anchor: "toe" };
+  const b = k.badge;
+  if (b === "HOOK")  return { pitch: 35, roll: 14 * sgn, yawOff: -30 * sgn, bend: 0.5, anchor: null };
+  if (b === "KNEE")  return { pitch: 48, roll: 0, yawOff: 0, bend: 0.5, anchor: null };
+  if (b === "KICK")  return { pitch: -20, roll: 0, yawOff: 0, bend: 0.8, anchor: null };
+  if (b === "SCUFF") return { pitch: -16, roll: 0, yawOff: 0, bend: 0.8, anchor: null };
+  if (b === "SWEEP") return { pitch: 10, roll: -8 * sgn, yawOff: 0, bend: 0.6, anchor: null };
+  return null;
+}
+
+const ATT_FLAT = { pitch: 0, roll: 0, yawOff: 0, bend: 1, anchor: null };
+
+// numeric blend between two keyframes' attitudes; anchorW says how firmly the
+// anchored point is pinned to the floor (the boot's hover shrinks with it)
+function blendAttitude(a, b, s) {
+  if (!a && !b) return null;
+  const A = a || ATT_FLAT, B = b || ATT_FLAT;
+  return {
+    pitch: A.pitch + (B.pitch - A.pitch) * s,
+    roll: A.roll + (B.roll - A.roll) * s,
+    yawOff: A.yawOff + (B.yawOff - A.yawOff) * s,
+    bend: (A.bend ?? 1) + ((B.bend ?? 1) - (A.bend ?? 1)) * s,
+    anchor: s < 0.5 ? A.anchor : B.anchor,
+    anchorW: (A.anchor ? 1 - s : 0) + (B.anchor ? s : 0)
+  };
+}
+
+function settledAttitude(k, foot) {
+  const a = kfAttitude(k, foot);
+  return a ? { ...a, anchorW: a.anchor ? 1 : 0 } : null;
+}
+
 // Deterministic per-step "humanizer": same beat + foot always grooves the
 // same way (no Math.random — reproducibility matters here).
 function grooveHash(seed, salt) {
@@ -861,7 +904,8 @@ function footState(foot, t) {
   const i = findIdx(arr, t);
   const prev = arr[i];
   const next = arr[i + 1];
-  const base = { x: prev.x, y: prev.y, a: prev.a, lift: poseLift(prev), pose: prev.pose, settled: true };
+  const base = { x: prev.x, y: prev.y, a: prev.a, lift: poseLift(prev), pose: prev.pose,
+                 settled: true, att: settledAttitude(prev, foot) };
   if (!next) return base;
   const P = PROFILES[next.prof] || PROFILES.step;
   let winScale = P.win || 1;
@@ -892,7 +936,11 @@ function footState(foot, t) {
       a: lerpAngle(prev.a, next.a, moveS),
       lift: Math.max(lift, prevLift + (nextLift - prevLift) * s),
       pose: s < 0.5 ? prev.pose : next.pose,
-      settled: s > 0.85
+      settled: s > 0.85,
+      // stomps rear slightly toe-up on the way up, then slam down dead flat
+      att: raw < 0.8
+        ? { ...ATT_FLAT, pitch: -14 * Math.sin(Math.PI * raw / 0.8), anchorW: 0 }
+        : blendAttitude(null, kfAttitude(next, foot), s)
     };
   }
   const sPos = P.pos ? P.pos(raw) : s;
@@ -915,8 +963,20 @@ function footState(foot, t) {
     a: lerpAngle(prev.a, next.a, s),
     lift,
     pose: s < 0.5 ? prev.pose : next.pose,
-    settled: s > 0.85
+    settled: s > 0.85,
+    att: moveAttitude(prev, next, foot, s, raw)
   };
+}
+
+// blended attitude for a foot mid-window, plus per-move flourishes that only
+// exist while the foot travels (zero at both ends, so landings never snap)
+function moveAttitude(prev, next, foot, s, raw) {
+  const att = blendAttitude(kfAttitude(prev, foot), kfAttitude(next, foot), s);
+  if (att && next.badge === "SWEEP") {
+    // the sweeping toe fans outward through the arc and settles back
+    att.yawOff += (foot === "R" ? 22 : -22) * Math.sin(Math.PI * raw);
+  }
+  return att;
 }
 
 function thetaAt(t) {
@@ -988,6 +1048,10 @@ const elBootLabL = document.getElementById("bootLabL");
 const elBootLabR = document.getElementById("bootLabR");
 const BOOT_MESH = buildBootMesh();
 const BOOT_STITCHES = buildBootStitches();
+// foot-local pivot points the boot attitude rotates about (boot-mesh units):
+// the very toe tip and the rear bottom corner of the cuban heel sit at z = 0,
+// so an anchored rotation keeps them exactly on the floor contact point
+const BOOT_PIVOTS = { toe: [27.5, 0, 0], heel: [-13.6, 0, 0] };
 const BOOT_COLORS = {
   L: { vamp: [182, 54, 54], shaft: [222, 80, 80], collar: [148, 38, 38],
        sole: [34, 25, 20], lining: [206, 166, 118], opening: [64, 44, 30], stitch: [244, 222, 196] },
@@ -1232,10 +1296,21 @@ function placeFoot(f, shadow, contact, boot, s) {
   f.g.setAttribute("opacity", 1 - 0.72 * bootIn);
   const side = boot === elBootL ? "L" : "R";
   const lab = side === "L" ? elBootLabL : elBootLabR;
+  const bScale = VIEW3D.shaft / 14;
   if (bootIn > 0.05) {
-    const bScale = VIEW3D.shaft / 14;
+    // per-move boot attitude: pitch/roll about a foot-local pivot. Anchored
+    // moves (toe touches, heel digs) pin their contact point to the floor —
+    // the pose hover is squeezed out by anchorW so the tip actually touches.
+    const att = s.att;
+    let pitch = 0, roll = 0, yawOff = 0, bend = 1, pivot = null, bootLift = liftUp;
+    if (att) {
+      pitch = att.pitch; roll = att.roll; yawOff = att.yawOff; bend = att.bend ?? 1;
+      pivot = BOOT_PIVOTS[att.anchor] || null;
+      bootLift = liftUp * (1 - (att.anchorW || 0));
+    }
     renderBoot3D(boot, BOOT_MESH, BOOT_STITCHES, {
-      sx, sy, yaw: sa, liftPx: liftUp, scale: bScale,
+      sx, sy, yaw: sa + yawOff, liftPx: bootLift, scale: bScale,
+      pitch, roll, pivot, bend,
       tiltK: curTiltK, sinTilt: curSinTilt, colors: BOOT_COLORS[side]
     });
     boot.setAttribute("opacity", 0.97 * bootIn);
@@ -1260,7 +1335,11 @@ function placeFoot(f, shadow, contact, boot, s) {
   // contact ring on the floor under the toe or heel (stays on the floor
   // even while the foot hovers above it)
   if ((s.pose === "toe" || s.pose === "heel") && s.settled) {
-    const ly = s.pose === "toe" ? -14 : 18;
+    // in 3D the ring slides out to sit exactly under the boot's anchored
+    // toe tip / heel corner; in 2D (bootIn = 0) it stays where it always was
+    const ly2d = s.pose === "toe" ? -14 : 18;
+    const lyB = s.pose === "toe" ? -BOOT_PIVOTS.toe[0] * bScale : -BOOT_PIVOTS.heel[0] * bScale;
+    const ly = ly2d + (lyB - ly2d) * bootIn;
     const cx = sx - ly * Math.sin(rad);
     const cy = sy + ly * Math.cos(rad) * curTiltK;
     contact.setAttribute("transform",

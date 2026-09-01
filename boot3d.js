@@ -105,7 +105,16 @@ function bootShade(rgb, b) {
 }
 
 // pose: {sx, sy, yaw, liftPx, scale, tiltK, sinTilt,
+//        pitch, roll, pivot, bend, // optional attitude: degrees + foot-local pivot
 //        colors: {vamp, shaft, collar, sole, lining, opening, stitch} as [r,g,b]}
+// pitch > 0 pitches the toe DOWN (a pointed foot); pitch < 0 rocks back onto
+// the heel. roll > 0 rolls the sole toward the dancer's left. Both rotate the
+// mesh about `pivot` (foot-local [x,y,z], default the ankle) BEFORE the yaw,
+// and the pivot itself projects exactly where it would with no attitude — so
+// an anchored heel corner or toe tip stays planted on its floor contact point
+// while the rest of the boot swings around it. bend (0..1, default 1) is the
+// fraction of the pitch the shaft keeps: below 1 the boot folds at the ankle
+// like a flexed foot instead of tipping over rigidly.
 function renderBoot3D(el, mesh, stitches, pose) {
   const NS = "http://www.w3.org/2000/svg";
   let gF = el.firstChild, gS = el.lastChild;
@@ -131,9 +140,59 @@ function renderBoot3D(el, mesh, stitches, pose) {
   const rad = pose.yaw * Math.PI / 180;
   const cosA = Math.cos(rad), sinA = Math.sin(rad);
   const S = pose.scale;
-  const rot3 = ([lx, ly, lz]) => {
-    const gx = -ly, gy = -lx;                 // foot-local → glyph frame (toe = -y)
+  const pitch = (pose.pitch || 0) * Math.PI / 180;
+  const roll = (pose.roll || 0) * Math.PI / 180;
+  const tilted = pitch !== 0 || roll !== 0;
+  const cP = Math.cos(pitch), sP = Math.sin(pitch);
+  const cR = Math.cos(roll), sR = Math.sin(roll);
+  const piv = pose.pivot || [-6, 0, 6]; // default pivot: the ankle
+  // ankle hinge: the shaft keeps only `bend` of the pitch (a pointed foot
+  // pitches steeply while the shin stays near vertical). back = how much the
+  // shaft is counter-rotated, about the (already pitched) ankle, so the boot
+  // folds at the ankle instead of toppling rigidly.
+  const bendK = pose.bend === undefined ? 1 : pose.bend;
+  const back = (1 - bendK) * pitch;
+  const ANKLE = [-6.5, 0, 10];
+  // how much a vertex belongs to the shaft: 0 in the foot, 1 up the tube
+  const shaftW = lz => {
+    const u = Math.max(0, Math.min(1, (lz - 9) / 7));
+    return u * u * (3 - 2 * u);
+  };
+  // attitude in foot-local space: rigid pitch+roll about piv, then the
+  // shaft's counter-rotation about the moved ankle
+  const rigid = ([lx, ly, lz]) => {
+    const x = lx - piv[0], y = ly - piv[1], z = lz - piv[2];
+    const x1 = x * cP + z * sP, z1 = z * cP - x * sP;      // +pitch drops the toe
+    const y1 = y * cR - z1 * sR, z2 = z1 * cR + y * sR;    // +roll tips to the left
+    return [x1 + piv[0], y1 + piv[1], z2 + piv[2]];
+  };
+  const ank = tilted ? rigid(ANKLE) : ANKLE;
+  const att = v => {
+    const r = rigid(v);
+    const w = back ? shaftW(v[2]) : 0;
+    if (w) {
+      const a = -back * w, c = Math.cos(a), s = Math.sin(a);
+      const ax = r[0] - ank[0], az = r[2] - ank[2];
+      r[0] = ax * c + az * s + ank[0];
+      r[2] = az * c - ax * s + ank[2];
+    }
+    return r;
+  };
+  // yaw a (possibly attitude-rotated) foot-local vector into the glyph frame
+  const yaw3 = ([lx, ly, lz]) => {
+    const gx = -ly, gy = -lx;               // foot-local → glyph frame (toe = -y)
     return [gx * cosA - gy * sinA, gx * sinA + gy * cosA, lz];
+  };
+  const rot3 = tilted ? (v => yaw3(att(v))) : yaw3;
+  // rotate a DIRECTION anchored at local height z0 (stitch normals): pitch
+  // net of the shaft counter-rotation at that height, then roll, then yaw
+  const rotDir = ([lx, ly, lz], z0) => {
+    if (!tilted) return yaw3([lx, ly, lz]);
+    const a = pitch - back * shaftW(z0);
+    const c = Math.cos(a), s = Math.sin(a);
+    const x1 = lx * c + lz * s, z1 = lz * c - lx * s;
+    const y1 = ly * cR - z1 * sR, z2 = z1 * cR + ly * sR;
+    return yaw3([x1, y1, z2]);
   };
   const proj = ([rx, ry, rz]) =>
     [pose.sx + rx * S,
@@ -177,7 +236,7 @@ function renderBoot3D(el, mesh, stitches, pose) {
     const poly = stitches[s];
     let face = 0;
     const d = poly.map((pt, i) => {
-      const rn = rot3(pt.n);
+      const rn = rotDir(pt.n, pt.p[2]); // normals are directions: attitude-rotate, no pivot shift
       face += rn[1] * pose.sinTilt + rn[2] * pose.tiltK;
       const [px, py] = proj(rot3(pt.p));
       return (i ? "L" : "M") + px.toFixed(1) + "," + py.toFixed(1);
