@@ -520,7 +520,7 @@ const VIEW3D = {
   azimRate: 0.03,  // per-frame ease toward the azimuth target (smaller = calmer)
   azimVmax: 14,    // deg/s cap on the side-angle drift (the "camera operator" speed limit)
   rotRate: 0.15,   // per-frame proportional pull of the follow rotation toward the facing
-  rotVmax: 90,     // deg/s cap on the follow rotation — the boots turn on screen first,
+  rotVmax: 120,    // deg/s cap on the follow rotation — the boots turn on screen first,
                    // the camera pans after them at an operator's pace (old law hit ~436)
   rotHold: 0.12,   // fraction of rotVmax available while the facing is still turning:
                    // the camera all but freezes so the turn reads in the boots
@@ -806,36 +806,10 @@ function weightAt(t) {
   return weightKF[findIdx(weightKF, t)].foot;
 }
 
-// Groove-mode hip glow: instead of snapping between feet on the beat, the
-// weight leans a little toward the foot about to take it (anticipation) and
-// then flows across during the transfer — the sway a dancer's hips have.
-function glowPos(t, L, R) {
-  const i = findIdx(weightKF, t);
-  const cur = weightKF[i];
-  const nxt = weightKF[i + 1];
-  const posOf = f => (f === "L" ? L : R);
-  const curF = posOf(cur.foot);
-  let x = curF.x, y = curF.y;
-  const LEAN = 0.25, LEAD = 0.3, T = 0.35;
-  if (i > 0 && weightKF[i - 1].foot !== cur.foot) {
-    const age = t - cur.t;
-    if (age < T) {
-      // flow from the old foot (starting from the anticipation lean it
-      // already had) onto the new one
-      const pf = posOf(weightKF[i - 1].foot);
-      const s = LEAN + (1 - LEAN) * ease(Math.max(0, age) / T);
-      x = pf.x + (curF.x - pf.x) * s;
-      y = pf.y + (curF.y - pf.y) * s;
-    }
-  }
-  if (nxt && nxt.foot !== cur.foot && t > nxt.t - LEAD) {
-    const nf = posOf(nxt.foot);
-    const s = ease((t - (nxt.t - LEAD)) / LEAD) * LEAN;
-    x += (nf.x - x) * s;
-    y += (nf.y - y) * s;
-  }
-  return { x, y };
-}
+// Weight glow: anchored to the weighted foot (it moves with that foot's
+// drags and glides); a transfer reads as a quick fade-in under the new
+// foot rather than a blob sliding across the floor.
+const glowAnim = { foot: null, tAt: -1 };
 
 function eventAt(t) {
   const beat = ((t % WALL_BEATS) + WALL_BEATS) % WALL_BEATS;
@@ -884,11 +858,12 @@ const elBootR = document.getElementById("bootR");
 const elBootLabL = document.getElementById("bootLabL");
 const elBootLabR = document.getElementById("bootLabR");
 const BOOT_MESH = buildBootMesh();
+const BOOT_STITCHES = buildBootStitches();
 const BOOT_COLORS = {
   L: { vamp: [182, 54, 54], shaft: [222, 80, 80], collar: [148, 38, 38],
-       sole: [34, 25, 20], lining: [206, 166, 118], opening: [64, 44, 30] },
+       sole: [34, 25, 20], lining: [206, 166, 118], opening: [64, 44, 30], stitch: [244, 222, 196] },
   R: { vamp: [128, 84, 44], shaft: [212, 158, 96], collar: [160, 114, 63],
-       sole: [30, 22, 14], lining: [212, 174, 124], opening: [70, 48, 32] }
+       sole: [30, 22, 14], lining: [212, 174, 124], opening: [70, 48, 32], stitch: [248, 234, 206] }
 };
 const elContactL = document.getElementById("contactL");
 const elContactR = document.getElementById("contactR");
@@ -1075,9 +1050,12 @@ function render() {
   renderBadge("R", elBadgeR, R, t);
 
   const w = weightAt(t);
-  const wf = state.groove ? glowPos(t, L, R) : (w === "L" ? L : R);
+  if (w !== glowAnim.foot || t < glowAnim.tAt) { glowAnim.foot = w; glowAnim.tAt = t; }
+  const wf = w === "L" ? L : R;
+  const settle = ease(Math.max(0, Math.min(1, (t - glowAnim.tAt) / 0.22)));
   elGlow.setAttribute("cx", wf.x * SCALE);
   elGlow.setAttribute("cy", -wf.y * SCALE);
+  elGlow.setAttribute("opacity", 0.3 + 0.7 * settle);
 
   const dialRot = curRot;
   elCompassLabels.setAttribute("transform", "rotate(" + dialRot + ")");
@@ -1127,13 +1105,13 @@ function placeFoot(f, shadow, contact, boot, s) {
   const lab = side === "L" ? elBootLabL : elBootLabR;
   if (bootIn > 0.05) {
     const bScale = VIEW3D.shaft / 14;
-    renderBoot3D(boot, BOOT_MESH, {
+    renderBoot3D(boot, BOOT_MESH, BOOT_STITCHES, {
       sx, sy, yaw: sa, liftPx: liftUp, scale: bScale,
       tiltK: curTiltK, sinTilt: curSinTilt, colors: BOOT_COLORS[side]
     });
     boot.setAttribute("opacity", 0.97 * bootIn);
     lab.setAttribute("x", sx);
-    lab.setAttribute("y", sy - liftUp - 38 * bScale * curSinTilt - 5);
+    lab.setAttribute("y", sy - liftUp - 44 * bScale * curSinTilt - 5);
     lab.setAttribute("opacity", 0.9 * bootIn);
   } else {
     boot.setAttribute("opacity", 0);
