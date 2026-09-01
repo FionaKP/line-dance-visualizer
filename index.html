@@ -509,7 +509,7 @@ const CAM_MAX_LEAD = 1.6;   // units the dancer may drift off-center before the 
 const VIEW3D = {
   tilt: 32,        // deg the camera leans away from straight-down
   shaft: 20,       // boot shaft height in px at full tilt
-  liftPx: 26,      // px a fully lifted foot rises at full tilt
+  liftPx: 32,      // px a fully lifted foot rises at full tilt
   azimBase: 12,    // resting side angle, deg (0 = dead-on from above/behind)
   azimGain: 22,    // max extra side-angle swing from travel direction, deg
   azimRate: 0.03,  // per-frame ease toward the azimuth target (smaller = calmer)
@@ -967,7 +967,9 @@ function renderBadge(foot, el, s, t) {
   }
   if (!badge) { el.setAttribute("opacity", 0); return; }
   const [bx, by] = worldToScreen(s.x, s.y);
-  el.setAttribute("transform", "translate(" + bx + "," + (by - 40) + ")");
+  // ride up with the lifted foot so tall lifts don't collide with the pill
+  const bLift = s.lift * VIEW3D.liftPx * curSinTilt;
+  el.setAttribute("transform", "translate(" + bx + "," + (by - 40 - bLift) + ")");
   el.setAttribute("opacity", alpha);
   const text = el.querySelector("text");
   const rect = el.querySelector("rect");

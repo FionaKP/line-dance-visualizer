@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<!-- Headless-Chrome snapshot rig for perspective tuning (not part of the app).
+     Usage: /tuning/snap.html?beat=17.6&tilt=40&azim=18&zoom=1.8
+     Loads the app in an iframe, seeks with the given VIEW3D overrides, then
+     copies the floor SVG full-page so `chrome --headless --screenshot` can
+     rasterize a still. -->
+<html>
+<body style="margin:0;background:#131722">
+<iframe id="app" src="/" style="width:1040px;height:900px;border:0;position:absolute;left:-2000px;top:0"></iframe>
+<div id="out"></div>
+<div id="status" style="color:#666">waiting</div>
+<script>
+const q = new URLSearchParams(location.search);
+const app = document.getElementById('app');
+const status = document.getElementById('status');
+let tries = 0;
+const timer = setInterval(() => {
+  tries++;
+  const w = app.contentWindow;
+  if (!w || typeof w.seek !== 'function') {
+    status.textContent = 'try ' + tries;
+    if (tries > 50) clearInterval(timer);
+    return;
+  }
+  clearInterval(timer);
+  try {
+    const patch = {};
+    for (const k of ['tilt','shaft','liftPx','azimBase','azimGain','azimRate',
+                     'tiltRate','speedGate','velSmooth','azimVmax']) {
+      if (q.get(k) !== null) patch[k] = +q.get(k);
+    }
+    const beat = +(q.get('beat') || 0);
+    const azim = q.get('azim');
+    w.eval('Object.assign(VIEW3D,' + JSON.stringify(patch) + ');' +
+           'seek(' + beat + ');' +
+           'state.effTilt = state.view3d ? VIEW3D.tilt : 0;' +
+           'state.azim = ' + (azim !== null ? +azim : 'VIEW3D.azimBase') + ';' +
+           'render();');
+    const svg = w.document.getElementById('floor').cloneNode(true);
+    const zoom = +(q.get('zoom') || 1);
+    if (zoom !== 1) {
+      const wd = 520 / zoom, ht = 440 / zoom;
+      svg.setAttribute('viewBox', (260 - wd / 2) + ' ' + (220 - ht / 2) + ' ' + wd + ' ' + ht);
+    }
+    svg.setAttribute('width', '780'); svg.setAttribute('height', '660');
+    document.getElementById('out').appendChild(svg);
+    status.textContent = 'SNAP_READY';
+  } catch (e) {
+    status.textContent = 'ERROR ' + e.message;
+  }
+}, 200);
+</script>
+</body>
+</html>
