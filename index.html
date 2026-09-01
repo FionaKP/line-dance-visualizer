@@ -512,7 +512,8 @@ const VIEW3D = {
   liftPx: 26,      // px a fully lifted foot rises at full tilt
   azimBase: 12,    // resting side angle, deg (0 = dead-on from above/behind)
   azimGain: 22,    // max extra side-angle swing from travel direction, deg
-  azimRate: 0.015, // per-frame ease toward the azimuth target (smaller = calmer)
+  azimRate: 0.03,  // per-frame ease toward the azimuth target (smaller = calmer)
+  azimVmax: 14,    // deg/s cap on the side-angle drift (the "camera operator" speed limit)
   tiltRate: 0.05,  // per-frame ease of the tilt toggle transition
   speedGate: 0.5,  // floor units/sec of travel before the side angle reacts
 };
@@ -836,7 +837,12 @@ function render() {
   const speed = Math.hypot(velSm.x, velSm.y);
   const azimGoal = state.view3d ? azimuthTarget(svx, -svy, speed) : 0;
   const prevRot = curRot;
-  state.azim += (azimGoal - state.azim) * VIEW3D.azimRate;
+  // rate-limited drift: proportional pull, but never faster than azimVmax —
+  // an exponential ease alone spikes hard on big target jumps and then
+  // crawls; the cap makes it move like an operator panning at steady speed
+  const azStep = (azimGoal - state.azim) * VIEW3D.azimRate;
+  const azCap = VIEW3D.azimVmax * dt;
+  state.azim += Math.max(-azCap, Math.min(azCap, azStep));
   curRot = viewRot + state.azim;
   window.__viewStats.tick(Math.abs(curRot - prevRot) / dt,
                           Math.hypot(state.cam.x - camPX, state.cam.y - camPY) / dt, dt);
