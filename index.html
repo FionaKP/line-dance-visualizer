@@ -116,10 +116,35 @@
   button.primary {
     background: var(--accent);
     border-color: var(--accent);
-    color: #12131a;
+    color: #10201d;
     font-weight: 600;
-    min-width: 76px;
   }
+  .controls button.icon {
+    width: 38px;
+    padding: 8px 0;
+    text-align: center;
+    font-size: 0.95rem;
+    line-height: 1;
+    flex-shrink: 0;
+  }
+  /* view toggles: one compact segmented cluster instead of five loose buttons */
+  .seg {
+    display: flex;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .seg button {
+    border: 0;
+    border-left: 1px solid var(--border);
+    border-radius: 0;
+    padding: 8px 10px;
+    font-size: 0.76rem;
+    color: var(--muted);
+  }
+  .seg button:first-child { border-left: 0; }
+  .seg button:hover { color: var(--text); }
+  .seg button.toggled { background: var(--accent-dim); color: var(--accent); }
   button.toggled {
     background: var(--accent-dim);
     border-color: var(--accent);
@@ -242,6 +267,23 @@
     color: var(--muted);
   }
   .sync-controls button { padding: 6px 9px; font-size: 0.78rem; }
+  /* the manual alignment tools hide behind one disclosure: auto match is the
+     default path, so only Sync to video stays at the surface */
+  .finetune { flex-basis: 100%; }
+  .finetune summary {
+    cursor: pointer;
+    color: var(--muted);
+    font-size: 0.78rem;
+    padding: 4px 0;
+  }
+  .finetune summary:hover { color: var(--text); }
+  .finetune .ft-body {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+    margin-top: 6px;
+  }
   .sync-controls input {
     width: 70px;
     background: var(--bg);
@@ -419,17 +461,18 @@
         </div>
       </div>
       <div class="controls">
-        <button class="primary" id="btn-play">Play</button>
-        <button id="btn-restart" title="Back to count 1">&#8676;</button>
-        <button id="btn-prev" title="Previous step">&#9664;</button>
-        <button id="btn-next" title="Next step">&#9654;</button>
-        <button id="btn-loop-sec" title="Repeat the current section">Loop section</button>
-        <button id="btn-follow" title="Rotate the floor so forward is always up">Follow</button>
-        <button id="btn-3d" title="Tilted perspective view with boots">3D</button>
-        <button id="btn-groove" title="Subtle human timing and sway; turn off for strict practice">Groove</button>
-        <button id="btn-tick" title="Count clicks">Clicks</button>
-        <div class="bpm">
-          <span>Tempo</span>
+        <button class="primary icon" id="btn-play" title="Play or pause (Space)">&#9654;</button>
+        <button class="icon" id="btn-restart" title="Back to count 1">&#8634;</button>
+        <button class="icon" id="btn-prev" title="Previous step (&#8592;)">&#9665;</button>
+        <button class="icon" id="btn-next" title="Next step (&#8594;)">&#9655;</button>
+        <div class="seg">
+          <button id="btn-loop-sec" title="Repeat the current section">Loop</button>
+          <button id="btn-follow" title="Rotate the floor so forward is always up">Follow</button>
+          <button id="btn-3d" title="Tilted perspective view with boots">3D</button>
+          <button id="btn-groove" title="Subtle human timing and sway; turn off for strict practice">Groove</button>
+          <button id="btn-tick" title="Count clicks (metronome)">Clicks</button>
+        </div>
+        <div class="bpm" title="Playback tempo">
           <input type="range" id="bpm" min="40" max="140" value="96">
           <span class="val" id="bpm-val">96 bpm</span>
         </div>
@@ -455,15 +498,20 @@
       <div id="player-wrap" style="display:none">
         <div id="yt-player"></div>
         <div class="sync-controls">
-          <label>Count 1 at <input type="number" id="start-time" step="0.1"> s</label>
-          <button id="btn-start-now" title="Set to the video's current time">Set to now</button>
-          <button id="btn-cue" title="Find the stepsheet's lyric cue in the video captions">From lyrics</button>
-          <button id="btn-n-b1">-1s</button>
-          <button id="btn-n-b01">-0.1</button>
-          <button id="btn-n-f01">+0.1</button>
-          <button id="btn-n-f1">+1s</button>
-          <button id="btn-tap" title="Tap along with the beat to set the tempo">Tap tempo</button>
           <button id="btn-sync" title="Drive the dance from the video playhead">Sync to video</button>
+          <details class="finetune">
+            <summary title="Manual alignment tools — auto match usually gets this right">Fine-tune sync</summary>
+            <div class="ft-body">
+              <label>Count 1 at <input type="number" id="start-time" step="0.1"> s</label>
+              <button id="btn-start-now" title="Set count 1 to the video's current time">Set to now</button>
+              <button id="btn-cue" title="Find the stepsheet's lyric cue in the video captions">From lyrics</button>
+              <button id="btn-n-b1" title="Start 1 second earlier">-1s</button>
+              <button id="btn-n-b01" title="Start 0.1 second earlier">-0.1</button>
+              <button id="btn-n-f01" title="Start 0.1 second later">+0.1</button>
+              <button id="btn-n-f1" title="Start 1 second later">+1s</button>
+              <button id="btn-tap" title="Tap along with the beat to set the tempo">Tap tempo</button>
+            </div>
+          </details>
         </div>
       </div>
     </div>
@@ -1591,7 +1639,7 @@ function frame() {
     const playing = ytPlayer.getPlayerState() === 1;
     if (playing !== state.playing) {
       state.playing = playing;
-      btnPlay.textContent = playing ? "Pause" : "Play";
+      btnPlay.textContent = playing ? "❚❚" : "▶";
     }
     const tb = (ytPlayer.getCurrentTime() - music.start) * (music.exactBpm || state.bpm) / 60;
     state.introCountdown = tb < 0 ? Math.ceil(-tb) : null;
@@ -1622,7 +1670,7 @@ const btnPlay = document.getElementById("btn-play");
 function setPlaying(p) {
   state.playing = p;
   if (p) reanchor();
-  btnPlay.textContent = p ? "Pause" : "Play";
+  btnPlay.textContent = p ? "❚❚" : "▶";
 }
 function togglePlay() {
   if (music.synced && ytPlayer && ytPlayer.getPlayerState) {

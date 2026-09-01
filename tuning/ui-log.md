@@ -64,3 +64,30 @@ the floor edges fall away without dimming the boots.
 
 Verdict: keep. Boards-as-beat-grid works; the faint overlay carries the
 other axis.
+
+## Iteration 3 — button trim
+
+Hypothesis: 11 text buttons on the transport row + 10 always-visible music
+controls is the "wall of buttons" the owner wants trimmed; auto-match being
+the default music path means the manual sync tools can hide until needed.
+
+Change:
+- Transport: Play becomes a compact teal icon button (▶ / ❚❚ — the only JS
+  wiring change: two `textContent` sites), restart/prev/next become 38px
+  icon buttons (↺ ◁ ▷), all tooltipped with their keyboard shortcuts.
+- The five view toggles (Loop / Follow / 3D / Groove / Clicks) merge into
+  one segmented cluster — same ids, same `.toggled` class, ~40% narrower
+  than five loose buttons, and reads as one "view settings" unit.
+- Tempo keeps slider + live "N bpm" value; the redundant "Tempo" label goes.
+- Music card: Sync to video stays as the single surfaced music toggle;
+  Count-1 input, Set to now, From lyrics, ±1s/±0.1s nudges, and Tap tempo
+  collapse behind a "Fine-tune sync" `<details>` disclosure.
+
+Screenshots: closed state shows a 4-icon transport + one cluster + slider;
+open disclosure shows every manual tool intact. Verified by dispatching
+events on every control: next/prev/restart seek correctly, all five toggles
+flip state and class, play glyph swaps ▶/❚❚, nudges move `music.start`
+±1s, sync toggles, and Space/←/→ still work. `node tests/run.js` 96/96.
+
+Verdict: keep. Nothing lost, transport row went from 11 mixed-width text
+buttons to 4 icons + 1 cluster + slider.
