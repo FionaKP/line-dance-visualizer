@@ -1,0 +1,97 @@
+{
+  "meta": {
+    "ok": true,
+    "wallBeats": 16,
+    "walls": 1,
+    "warnings": 0
+  },
+  "events": [
+    {
+      "beat": 0,
+      "foot": "R",
+      "dx": 1.7,
+      "dy": 0
+    },
+    {
+      "beat": 1,
+      "foot": "L",
+      "dx": -0.85,
+      "dy": 0
+    },
+    {
+      "beat": 2,
+      "foot": "R",
+      "dx": 1.7,
+      "dy": 0
+    },
+    {
+      "beat": 3,
+      "foot": "L",
+      "dx": -0.85,
+      "dy": 0
+    },
+    {
+      "beat": 4,
+      "foot": "R",
+      "lifted": true,
+      "pose": "toe",
+      "dyMin": 0.5
+    },
+    {
+      "beat": 5,
+      "foot": "R",
+      "self": true,
+      "dx": 0
+    },
+    {
+      "beat": 6,
+      "foot": "L",
+      "dyMin": 0.5
+    },
+    {
+      "beat": 7,
+      "turn": 180
+    },
+    {
+      "beat": 8,
+      "foot": "R",
+      "turn": 45
+    },
+    {
+      "beat": 9,
+      "foot": "L",
+      "dyMin": 0.5
+    },
+    {
+      "beat": 10,
+      "foot": "R",
+      "dyMin": 0.5
+    },
+    {
+      "beat": 11,
+      "foot": "L",
+      "dyMin": 0.5
+    },
+    {
+      "beat": 12,
+      "foot": "R",
+      "dx": 1.5,
+      "dy": 0
+    },
+    {
+      "beat": 13,
+      "weight": "L"
+    },
+    {
+      "beat": 14,
+      "foot": "R",
+      "dxMax": -0.1,
+      "dyMin": 0.1
+    },
+    {
+      "beat": 15,
+      "weight": "L",
+      "turn": 135
+    }
+  ]
+}

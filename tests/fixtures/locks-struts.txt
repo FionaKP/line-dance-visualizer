@@ -1,0 +1,14 @@
+Lock And Strut Test
+Count: 16  Wall: 2  Level: Improver
+
+SECTION 1: LOCK STEPS, TOE STRUTS
+1&2 Step forward on R, Lock L behind R, Step forward on R
+3-4 Step back on L, Lock R over L
+5,6 Cross R toe over L (1), Drop R heel (2)
+7,8 Step L toe back (3), Drop L heel (4)
+
+SECTION 2: FLICK, BOUNCE, SLIDE, TURN
+1-2 Step forward on left, flick right behind left
+3-4 Bounce heels twice while making a 1/4 turn right
+5-6 Step left to left side, slide right toward left
+7-8 Step forward on right, turn 1/4 right

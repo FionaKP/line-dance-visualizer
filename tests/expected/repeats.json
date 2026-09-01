@@ -1,0 +1,24 @@
+{
+  "meta": { "ok": true, "wallBeats": 32, "walls": 4, "warnings": 0 },
+  "events": [
+    { "beat": 0, "foot": "R", "dx": 1.7, "dy": 0 },
+    { "beat": 1, "foot": "L", "dx": -0.85 },
+    { "beat": 2, "foot": "R", "dx": 1.7, "dy": 0 },
+    { "beat": 3, "foot": "L", "dx": -0.85 },
+    { "beat": 4, "foot": "R", "dx": 1.7, "dy": 0 },
+    { "beat": 5, "foot": "L", "dx": -0.85 },
+    { "beat": 6, "foot": "R", "dx": 1.7 },
+    { "beat": 7, "foot": "L", "badge": "TOUCH", "lifted": true },
+    { "beat": 8, "foot": "L", "dx": -1.7, "dy": 0 },
+    { "beat": 9, "foot": "R", "dx": 0.85 },
+    { "beat": 14, "foot": "L", "dx": -1.7 },
+    { "beat": 15, "foot": "R", "badge": "TOUCH", "lifted": true },
+    { "beat": 16, "foot": "R", "badge": "STOMP", "impact": true },
+    { "beat": 18, "foot": "L", "badge": "STOMP", "impact": true },
+    { "beat": 20, "foot": "R", "badge": "STOMP", "impact": true },
+    { "beat": 22, "foot": "L", "badge": "STOMP", "impact": true },
+    { "beat": 24, "foot": "R", "dx": 0.85, "dy": 0 },
+    { "beat": 25, "foot": "L" },
+    { "beat": 31, "turn": -90 }
+  ]
+}
