@@ -304,6 +304,15 @@ function parseStepsheet(text) {
       let countStr = cm[1].trim();
       let desc = cm[2].trim();
 
+      // a first line like "90 Miles An Hour" or "2 Unlimited" is the dance's
+      // title, not a step line — nothing step-like in the words after the number
+      if (!title && lines.length === 0 && sections.length === 0 && !pendingName &&
+          line.length < 80 && !/:/.test(line) &&
+          !/\b(step|rock|touch|tap|kick|shuffle|chass|walk|cross|point|heel|toe|stomp|hold|turn|sweep|hitch|hook|close|together|side|forward|fwd|back|behind|recover|vine|drag|skate|scuff|stroll)\b/i.test(desc)) {
+        title = line;
+        continue;
+      }
+
       // expand ranges like "1-4"
       const expanded = countStr.replace(/(\d+)\s*-\s*(\d+)/g, (_, a, b) => {
         const out = [];
@@ -322,6 +331,14 @@ function parseStepsheet(text) {
         }
       }
       if (!tokens.length) continue;
+
+      // "1-8  ROCK, COASTER STEP" style: a count-range section header, not
+      // a step line — all caps and spanning most of a phrase of music
+      if (/[A-Za-z]{3}/.test(desc) && desc === desc.toUpperCase() &&
+          tokens[tokens.length - 1].beat - tokens[0].beat >= 6) {
+        pendingName = desc;
+        continue;
+      }
 
       // counts that restart from 1 advance the global offset; sheets with
       // continuous counts (1-32 straight through) keep offset at 0 no matter

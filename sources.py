@@ -360,12 +360,21 @@ def _pdf_objects(data):
 
 
 def _pdf_stream(body):
-    sm = re.search(rb"stream\r?\n(.*?)\r?\nendstream", body, re.S)
+    # old writers (Acrobat PDFWriter) end the `stream` keyword with a bare \r
+    sm = re.search(rb"stream(?:\r\n|\r|\n)(.*?)endstream", body, re.S)
     if not sm:
         return None
+    raw = sm.group(1)
+    if b"/ASCII85Decode" in body:
+        try:
+            import base64
+            raw = re.sub(rb"\s", b"", raw)
+            raw = base64.a85decode(re.sub(rb"^<~|~>?$", b"", raw))
+        except ValueError:
+            return None
     if b"/FlateDecode" in body:
-        return _pdf_inflate(sm.group(1))
-    return sm.group(1)
+        return _pdf_inflate(raw) or _pdf_inflate(raw.strip(b"\r\n "))
+    return raw
 
 
 def _pdf_tounicode(cmap_bytes):
