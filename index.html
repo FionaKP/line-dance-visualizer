@@ -309,10 +309,12 @@
           <ellipse id="shadowR" rx="14" ry="7" fill="#000" opacity="0.35"/>
           <ellipse id="contactL" rx="9" ry="6" fill="none" stroke="#e8eaf0" stroke-width="2.5" opacity="0"/>
           <ellipse id="contactR" rx="9" ry="6" fill="none" stroke="#e8eaf0" stroke-width="2.5" opacity="0"/>
-          <path id="bootL" fill="none" stroke="#189e8d" stroke-width="8" stroke-linecap="round" opacity="0"/>
-          <path id="bootR" fill="none" stroke="#dd7f28" stroke-width="8" stroke-linecap="round" opacity="0"/>
           <g id="footL"></g>
           <g id="footR"></g>
+          <!-- boot shafts draw over the shoes: a thin ankle column rising from
+               the heel is what makes the print read as a boot once tilted -->
+          <path id="bootL" fill="none" stroke="#189e8d" stroke-width="8" stroke-linecap="round" opacity="0"/>
+          <path id="bootR" fill="none" stroke="#dd7f28" stroke-width="8" stroke-linecap="round" opacity="0"/>
         </g>
         <g id="badgeL" opacity="0">
           <rect rx="9" height="18" y="-13" fill="#12141c" stroke="#2dd4bf" stroke-width="1.5"/>
@@ -506,7 +508,7 @@ const CAM_MAX_LEAD = 1.6;   // units the dancer may drift off-center before the 
 // perspective experiments don't need code edits.
 const VIEW3D = {
   tilt: 32,        // deg the camera leans away from straight-down
-  shaft: 14,       // boot shaft height in px at full tilt
+  shaft: 20,       // boot shaft height in px at full tilt
   liftPx: 26,      // px a fully lifted foot rises at full tilt
   azimBase: 12,    // resting side angle, deg (0 = dead-on from above/behind)
   azimGain: 22,    // max extra side-angle swing from travel direction, deg
