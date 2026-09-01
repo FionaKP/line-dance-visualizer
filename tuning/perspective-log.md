@@ -229,3 +229,152 @@ is capped at 14 deg/s everywhere.
   toward the glyph centroid would seat it better.
 - The snap rig (tuning/snap.html) can grow a filmstrip mode (N stills at
   fixed beat intervals in one page) for judging motion continuity visually.
+
+# Round 2: turn following
+
+Owner's brief: following the boots' turns directly is too jarring — the view
+should turn the SAME direction as the boots but delayed and slower, boots
+visibly rotating on screen first.
+
+## Method updates
+
+The round-1 devtools harness is now checked in as `tuning/simharness.js`
+(inject with a script tag, then `__sim(fromBeat, beats, warm=4)` /
+`__ab(view3dOverrides, segments)`). `__analyze` adds per-turn metrics from the
+frame trace: `maxErr` (deg of boot rotation visible on screen, i.e. view lag),
+`peakRate` (deg/s of the follow pan), `catchupBeats` (turn start until the
+view settles within 5 deg). `__viewStats` grew `maxFollowRate`/`maxLagDeg`.
+`__loadPivotSheet()` loads a 16-count turn-torture sheet (full pivot = two
+same-direction halves 2 beats apart, lone halves both ways, a quarter).
+`tuning/snap.html` gained the filmstrip mode round 1 wished for:
+`?strip=start,step,count` renders N stills off a continuous 60fps fake-clock
+sim (warmed 4 beats), so camera dynamics in stills are physically consistent.
+
+**Harness gotcha fixed in source:** consecutive fake-clock sims made
+`performance.now` jump backwards between runs; `dt` went to -15 s and the
+clamp arithmetic inverted, exploding `rotErr` by 130 revolutions. render()'s
+dt is now guarded to be positive (real browsers never go backwards, but the
+new law scales steps by dt, so the guard is cheap insurance).
+
+## Baseline (commit f0ab2c2, old lerpAngle 0.06 law)
+
+Choosin' Texas: half-turn shuffles peak 211 deg/s follow whip, only 55 deg of
+the turn ever visible in the boots (the world counter-rotates almost in step);
+wall quarter peaks 217. Pivot Test full pivot: peak 436 deg/s, total camera
+pan through the (net-zero-facing!) pivot 365 deg. Filmstrip confirms the read:
+grid whips frame to frame, boots barely change screen orientation.
+
+## Iteration 1 — capped unwrapped pursuit replaces the bare lerp (commit 68cd296)
+
+**Hypothesis:** a proportional pull with a hard deg/s cap (the azimVmax trick
+from round 1) turns the whip into an operator's pan; tracking the error
+UNWRAPPED (accumulate dTheta, don't wrap to ±180) keeps back-to-back
+same-direction turns panning the same way instead of flipping to the "short"
+side mid-phrase.
+
+**Change:** `state.rotErr` accumulates facing changes (loop-seam jumps >180
+per frame are discarded as teleports); viewTheta = theta - rotErr; err drains
+at `rotErr * rotRate` per frame, clamped to `rotVmax * dt`. Old law is the
+special case rotVmax=10000, rotRate=0.06 — verified it reproduces baseline
+numbers exactly.
+
+**Cap sweep (rotRate 0.06):** vmax 40 too slow (quarter turn catch-up 3.6
+beats, half unfinished when the reverse half arrives); 60 gentle (quarter
+2.5 beats); 90 best balance (half turn: lag 106, catch-up 3.6 beats; quarter:
+lag 70, 1.9 beats). Constant-rate pursuit (rotRate 0.3, cap binds to the end)
+vs proportional (0.06, exponential tail): numbers nearly identical; kept the
+proportional tail for the free ease-out. Partial follow (rotFollow 0.25,
+menu item 4): peak rate right back up to 140-180 deg/s — defeats the point,
+knob removed. NEGATIVE, don't re-litigate.
+
+**Full-pivot renorm:** with unwrapped error a full pivot owes ~360 deg and the
+camera would pan a slow full circle. Added: once the facing settles and
+|rotErr| > 200, renormalize by a revolution (take the short way home). The
+360-renumber is invisible on screen (same angle mod 360) — filmstrip frames
+across the renorm are continuous. The rotation-rate stat needed the same
+mod-360 wrap (a renumber is not motion).
+
+## Iteration 2 — hold during the turn + settle window (commit 68cd296)
+
+**Hypothesis (owner's menu item 2):** barely rotate while the turn is in
+progress, then catch up — so the whole turn reads in the boots, and a
+multi-part turn (full pivot) becomes one phrase followed by one pan.
+
+**Change:** `rotHold` (fraction of rotVmax while the facing moves >20 deg/s)
+and `rotSettle` (beats the hold lingers after the facing stops).
+
+**Measurements:** hold 0.12 freezes the view during turns (half turn: lag 171
+of 180 visible in the boots). rotSettle sweep on the full pivot's total
+camera pan: 0.5 → 185 deg, 1.0 → 155, 1.6 → 98 (bridges the 1.5-beat gap
+between pivot halves entirely) — but 1.6 delays every lone turn's catch-up by
+a full second, camera reads asleep. Kept 0.6: lone turns start panning ~0.4 s
+after the feet land; pivot pan 179 deg total vs 365 baseline.
+
+**Filmstrip judgment (33-38, step 0.4):** grid frozen while boots swing
+through the half turn (vt moves 9 deg during the entire turn), then one
+deliberate pan over ~2 beats, settling just as the reverse turn begins; the
+reverse reads as a smooth there-and-back sway. Exactly the brief.
+
+## Iteration 3 — eased pan acceleration (commit 68cd296)
+
+**Hypothesis:** the pan starting/stopping at 90 deg/s within one frame is a
+visible kick.
+
+**Change:** `rotAccel` — the pan speed is now a state (`state.rotVel`) easing
+toward the clamped proportional goal; an anti-overshoot clamp zeroes the
+velocity rather than gliding past the target. rotAccel 0.15 ≈ 0.11 s speed
+time-constant; ramp is visible in traces (per-frame vt deltas accelerate
+2 → 8 → 21 → 22 px) with zero overshoot in any segment.
+
+## Iteration 4 — turn arc closes with the camera (commit 637bb4c)
+
+With the camera now lagging, the old arc (trailing 1.5-beat theta window)
+expired mid-catch-up. The arc now spans from the camera's current heading
+(viewTheta) to the new facing whenever that is wider than the trailing
+window — it opens as the boots turn and visibly CLOSES as the view comes
+around, doubling as a "camera still turning" cue. No new elements (owner
+dislikes clutter); the fraction label still reads the actual trailing turn so
+it doesn't step down ¾ → ½ → ¼ while the pan runs. Considered a facing-ghost
+arrow (menu item 5) — skipped: arc + boots + compass already carry it.
+
+## Iteration 5 — cross-sheet + mode verification (no change)
+
+- Walkabout Test: straight walks untouched (avgRot 8.2 vs 8.3 before), wall
+  quarter lag 88 / pk 90 / catch-up 2.6 beats.
+- Pivot Test wall: every peak ≤ 90 + azim (old: 436); full pivot settles 2.5
+  beats after the second half; camera pan 179 deg vs 365.
+- 2D (3D-off) and follow-off: law is shared by design — 2D follow mode gets
+  the same calm turns (pk 90, no NaN); follow-off leaves curRot = azim only.
+  Note: the compass arrow tracks viewTheta, so in non-follow mode it now lags
+  a fast turn by a beat or two, like a real compass needle settling. Judged
+  fine (and the sheet/beat panel still snaps instantly).
+- Toggles and playback exercised in a live tab: no console errors.
+- node tests/run.js: 74/74.
+
+## Final state (round 2)
+
+New VIEW3D defaults: rotRate 0.15, rotVmax 90, rotHold 0.12, rotSettle 0.6,
+rotAccel 0.15 (all URL-overridable; rotVmax=10000&rotRate=0.06&rotHold=1
+&rotSettle=0&rotAccel=1 restores the old behavior for A/B).
+
+Before/after (60fps sim, warm 4 beats):
+
+- Choosin' Texas full loop (4-95): maxRot 209 → 96.2, avgRot 33.2 → 24.7,
+  maxFollowRate 90 (at the cap), maxLag 171 deg; cam/azim stats unchanged.
+- Half-turn shuffle: peak 211 → 90 deg/s; boot rotation visible on screen
+  55 → 171 deg; settles ~4 beats after turn start (the price of the calm cap).
+- Wall quarter turn: peak 217 → 90; catch-up 1.5 → 2.6 beats.
+- Pivot Test: peak 436 → 90 (+azim ~14); full-pivot camera travel 365 → 179 deg.
+
+## What I'd try next (round 2)
+
+- The half-turn catch-up (~4 beats at the 90 cap) overlaps the next move by
+  design; if the owner wants snappier halves, raise rotVmax toward 120 before
+  touching the hold — the hold is what makes the turn legible.
+- rotSettle ~1.5 would make full pivots nearly sway-free (98 deg travel) at
+  the cost of a 1 s dead time on every lone turn; could be made adaptive
+  (longer settle only when a second turn arrived recently).
+- The loop-seam teleport (round 1's note) still stands.
+- The turn-arc label bands (¼/½/¾) still read off the trailing window and
+  briefly show ¼ as a half turn exits the window — pre-existing; a
+  peak-latching label would fix it.
