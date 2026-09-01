@@ -34,6 +34,7 @@ const KIND = {
   split_center:       { dx: -0.15, dy: 0, aOff: 0,   self: true, noWeight: true },
   sweep_back:         { dx: 0.9,   dy: -0.5, lifted: true, pose: "air", badge: "SWEEP" },
   touch_beside:       { dx: 0.85,  dy: 0, lifted: true, pose: "toe", badge: "TOUCH" },
+  drag:               { dx: 0.85,  dy: 0, lifted: true, pose: "toe", badge: "DRAG" },
   touch_side:         { dx: 1.55,  dy: 0, lifted: true, pose: "toe", badge: "TOUCH" },
   touch_fwd:          { dx: 0.85,  dy: 0.8, lifted: true, pose: "toe", badge: "TOUCH" },
   touch_back:         { dx: 0.85,  dy: -0.8, lifted: true, pose: "toe", badge: "TOUCH" },
@@ -171,12 +172,14 @@ function parsePhrase(raw, ctx, warn) {
     push(kind, foot || other(ctx.lastFoot || "L"));
     return out;
   }
-  if (/\b(recover|replace)\b/.test(lower)) {
+  if (/\b(recover|replace)\b/.test(lower) ||
+      /^weight\s+(?:back\s+)?(?:on|to|onto)\b/.test(lower)) {
     out.push({ kind: "recover", foot: foot || other(ctx.lastFoot || "L"), txt: cap(p) });
     if (out[0].foot) ctx.lastFoot = out[0].foot;
     return out;
   }
 
+  if (/\bdrag\b/.test(lower)) { push("drag", foot || other(ctx.lastFoot || "L")); return out; }
   if (/\bhook\b/.test(lower)) { push("hook", foot || other(ctx.lastFoot || "L")); return out; }
   if (/\bhitch\b/.test(lower)) { push("hitch", foot || other(ctx.lastFoot || "L")); return out; }
   if (/\bscuff\b/.test(lower)) { push("scuff", foot || other(ctx.lastFoot || "L")); return out; }
@@ -211,7 +214,7 @@ function parsePhrase(raw, ctx, warn) {
   }
 
   // generic steps, walks, hops, and bare-foot continuations
-  const stepLike = /\b(step|walk|stroll|run|stride|hop|scoot)\b/.test(lower);
+  const stepLike = /\b(step|walk|stroll|run|stride|hop|scoot|close)\b/.test(lower);
   const bareFoot = /^(right|left)$/.test(lower);
   if (stepLike || bareFoot || ctx.mode) {
     if (/\b(walk|stroll|run|stride)\b/.test(lower)) ctx.mode = "walk";
@@ -295,7 +298,7 @@ function parseStepsheet(text) {
     if (/^starts?\b/i.test(line)) { intro = line; continue; }
     if (/^(counts?|walls?|level|chore|music)\b\s*:/i.test(line)) continue;
 
-    const cm = line.match(/^([0-9][0-9&,\-\s]*)(.*)$/);
+    const cm = line.match(/^(&?\s*[0-9][0-9&,\-\s]*)(.*)$/);
     if (cm && cm[2] && /[A-Za-z]/.test(cm[2]) && cm[2].trim().length > 3) {
       // a counted step line
       let countStr = cm[1].trim();
@@ -308,11 +311,14 @@ function parseStepsheet(text) {
         return out.join(" ");
       });
       const tokens = [];
+      let leadAmp = false;  // "&7-8": a pickup half-beat before the first count
       for (const tk of expanded.match(/(\d+|&)/g) || []) {
         if (tk === "&") {
           if (tokens.length) tokens.push({ c: "&", beat: tokens[tokens.length - 1].beat + 0.5 });
+          else leadAmp = true;
         } else if (+tk >= 1 && +tk <= 96) {
           tokens.push({ c: tk, beat: +tk - 1 });
+          if (leadAmp) { tokens.unshift({ c: "&", beat: +tk - 1.5 }); leadAmp = false; }
         }
       }
       if (!tokens.length) continue;
