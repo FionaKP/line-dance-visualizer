@@ -299,12 +299,18 @@
           <line id="trailL" stroke="#2dd4bf" stroke-width="3" stroke-dasharray="6 7" stroke-linecap="round" opacity="0"/>
           <line id="trailR" stroke="#fb923c" stroke-width="3" stroke-dasharray="6 7" stroke-linecap="round" opacity="0"/>
           <ellipse id="glow" rx="42" ry="30" fill="url(#weightGlow)"/>
+          <circle id="impactL" fill="none" stroke="#2dd4bf" stroke-width="3" opacity="0"/>
+          <circle id="impactR" fill="none" stroke="#fb923c" stroke-width="3" opacity="0"/>
+        </g>
+        <!-- dancer layer: drawn in screen space so lift and boot shafts can
+             rise vertically on screen while the tilted floor stays flat -->
+        <g id="dancer">
           <ellipse id="shadowL" rx="14" ry="7" fill="#000" opacity="0.35"/>
           <ellipse id="shadowR" rx="14" ry="7" fill="#000" opacity="0.35"/>
           <ellipse id="contactL" rx="9" ry="6" fill="none" stroke="#e8eaf0" stroke-width="2.5" opacity="0"/>
           <ellipse id="contactR" rx="9" ry="6" fill="none" stroke="#e8eaf0" stroke-width="2.5" opacity="0"/>
-          <circle id="impactL" fill="none" stroke="#2dd4bf" stroke-width="3" opacity="0"/>
-          <circle id="impactR" fill="none" stroke="#fb923c" stroke-width="3" opacity="0"/>
+          <path id="bootL" fill="none" stroke="#189e8d" stroke-width="8" stroke-linecap="round" opacity="0"/>
+          <path id="bootR" fill="none" stroke="#dd7f28" stroke-width="8" stroke-linecap="round" opacity="0"/>
           <g id="footL"></g>
           <g id="footR"></g>
         </g>
@@ -343,6 +349,7 @@
         <button id="btn-next" title="Next step">&#9654;</button>
         <button id="btn-loop-sec" title="Repeat the current section">Loop section</button>
         <button id="btn-follow" title="Rotate the floor so forward is always up">Follow</button>
+        <button id="btn-3d" title="Tilted perspective view with boots">3D</button>
         <button id="btn-tick" title="Count clicks">Clicks</button>
         <div class="bpm">
           <span>Tempo</span>
@@ -492,6 +499,54 @@ const SCALE = 50;           // px per floor unit
 const MOVE_WINDOW = 0.45;   // beats a foot spends traveling before it lands
 const TRAIL_MIN_DIST = 0.9; // units a step must travel to earn a path line
 const CAM_MAX_LEAD = 1.6;   // units the dancer may drift off-center before the camera is dragged
+
+// Tilted "3D" view. The floor is drawn under an oblique projection (vertical
+// squish by cos(tilt)); boots and lifted feet rise vertically in screen
+// space. Every value here is tunable from the URL (?tilt=40&azimGain=30) so
+// perspective experiments don't need code edits.
+const VIEW3D = {
+  tilt: 32,        // deg the camera leans away from straight-down
+  shaft: 14,       // boot shaft height in px at full tilt
+  liftPx: 26,      // px a fully lifted foot rises at full tilt
+  azimBase: 12,    // resting side angle, deg (0 = dead-on from above/behind)
+  azimGain: 22,    // max extra side-angle swing from travel direction, deg
+  azimRate: 0.015, // per-frame ease toward the azimuth target (smaller = calmer)
+  tiltRate: 0.05,  // per-frame ease of the tilt toggle transition
+  speedGate: 0.5,  // floor units/sec of travel before the side angle reacts
+};
+for (const [k, v] of new URLSearchParams(location.search)) {
+  if (k in VIEW3D && v !== "" && !isNaN(+v)) VIEW3D[k] = +v;
+}
+
+// Where the shifting side angle wants to be, given the dancer's smoothed
+// screen-space velocity. This is the "law" the perspective learner iterates
+// on: swing toward sideways travel so motion reads in 3D, stay put for
+// straight-ahead travel, rest at azimBase when still.
+function azimuthTarget(svx, svy, speed) {
+  if (speed < VIEW3D.speedGate) return VIEW3D.azimBase;
+  const phi = Math.atan2(svx, -svy); // 0 = traveling up-screen
+  return VIEW3D.azimBase + VIEW3D.azimGain * Math.sin(phi);
+}
+
+// Live view metrics so a tuning agent can measure "jarring" instead of
+// guessing: window.__viewStats.read() after some playback, .reset() between
+// experiments. Rotation rates in deg/s, camera speed in floor units/s.
+window.__viewStats = (() => {
+  let frames = 0, elapsed = 0, maxRot = 0, sumRot = 0, maxCam = 0, sumCam = 0;
+  return {
+    tick(rotRate, camSpeed, dt) {
+      frames++; elapsed += dt;
+      maxRot = Math.max(maxRot, rotRate); sumRot += rotRate * dt;
+      maxCam = Math.max(maxCam, camSpeed); sumCam += camSpeed * dt;
+    },
+    reset() { frames = 0; elapsed = 0; maxRot = 0; sumRot = 0; maxCam = 0; sumCam = 0; },
+    read() {
+      return { frames, elapsed: +elapsed.toFixed(2),
+               maxRotRate: +maxRot.toFixed(1), avgRotRate: +(elapsed ? sumRot / elapsed : 0).toFixed(1),
+               maxCamSpeed: +maxCam.toFixed(2), avgCamSpeed: +(elapsed ? sumCam / elapsed : 0).toFixed(2) };
+    }
+  };
+})();
 
 let dance = null;
 let WALL_BEATS = 8, TOTAL_BEATS = 8;
@@ -658,6 +713,8 @@ const footGlyphL = makeFoot("footL", css.getPropertyValue("--left").trim(), true
 const footGlyphR = makeFoot("footR", css.getPropertyValue("--right").trim(), false, "R");
 const elShadowL = document.getElementById("shadowL");
 const elShadowR = document.getElementById("shadowR");
+const elBootL = document.getElementById("bootL");
+const elBootR = document.getElementById("bootR");
 const elContactL = document.getElementById("contactL");
 const elContactR = document.getElementById("contactR");
 const elImpactL = document.getElementById("impactL");
@@ -679,6 +736,10 @@ const elWallLabel = document.getElementById("wall-label");
 
 const VIEW_CX = 260, VIEW_CY = 215;
 
+// per-frame view pose shared by render helpers
+let curRot = 0, curTiltK = 1, curSinTilt = 0;
+let velSm = { x: 0, y: 0 }, prevMid = null, lastFrameMs = null;
+
 // ---------------------------------------------------------------------------
 // Playback state
 // ---------------------------------------------------------------------------
@@ -695,6 +756,9 @@ const state = {
   introCountdown: null,
   cam: { x: 0, y: 0 },
   camLag: 0,
+  view3d: true,
+  azim: 0,
+  effTilt: 0,
   viewTheta: 0,
   lastBeatInt: -1
 };
@@ -733,6 +797,7 @@ function render() {
   // camera with intent: while the dancer travels it barely follows, letting
   // the feet drift off-center so the motion reads on screen; once the feet
   // settle it glides back to center so the dance stays easy to follow
+  const camPX = state.cam.x, camPY = state.cam.y;
   const errX = midX - state.cam.x, errY = midY - state.cam.y;
   const dist = Math.hypot(errX, errY);
   const traveling = !L.settled || !R.settled;
@@ -748,29 +813,55 @@ function render() {
   state.viewTheta = lerpAngle(state.viewTheta, theta, 0.06);
   const viewRot = state.follow ? -state.viewTheta : 0;
 
+  // --- 3D view dynamics: tilt eases with the toggle, the side angle drifts
+  // with the dancer's travel so movement reads in perspective ---
+  const nowMs = performance.now();
+  const dt = lastFrameMs === null ? 1 / 60 : Math.min(0.1, (nowMs - lastFrameMs) / 1000) || 1 / 60;
+  lastFrameMs = nowMs;
+  state.effTilt += ((state.view3d ? VIEW3D.tilt : 0) - state.effTilt) * VIEW3D.tiltRate;
+  curTiltK = Math.cos(state.effTilt * Math.PI / 180);
+  curSinTilt = Math.sin(state.effTilt * Math.PI / 180);
+  if (prevMid) {
+    velSm.x += ((midX - prevMid.x) / dt - velSm.x) * 0.08;
+    velSm.y += ((midY - prevMid.y) / dt - velSm.y) * 0.08;
+  }
+  prevMid = { x: midX, y: midY };
+  // travel direction in the view frame (before the azimuth, so it can't feed
+  // back on itself)
+  const vr = viewRot * Math.PI / 180;
+  const svx = velSm.x * Math.cos(vr) + velSm.y * Math.sin(vr);
+  const svy = -velSm.x * Math.sin(vr) + velSm.y * Math.cos(vr);
+  const speed = Math.hypot(velSm.x, velSm.y);
+  const azimGoal = state.view3d ? azimuthTarget(svx, -svy, speed) : 0;
+  const prevRot = curRot;
+  state.azim += (azimGoal - state.azim) * VIEW3D.azimRate;
+  curRot = viewRot + state.azim;
+  window.__viewStats.tick(Math.abs(curRot - prevRot) / dt,
+                          Math.hypot(state.cam.x - camPX, state.cam.y - camPY) / dt, dt);
+
   elWorld.setAttribute("transform",
-    "translate(" + VIEW_CX + "," + VIEW_CY + ") rotate(" + viewRot + ") " +
+    "translate(" + VIEW_CX + "," + VIEW_CY + ") scale(1," + curTiltK + ") rotate(" + curRot + ") " +
     "translate(" + (-state.cam.x * SCALE) + "," + (state.cam.y * SCALE) + ")");
 
   renderTrail("L", elTrailL, elDotL, t);
   renderTrail("R", elTrailR, elDotR, t);
   renderImpact("L", elImpactL, t);
   renderImpact("R", elImpactR, t);
-  renderTurnArc(t, midX, midY, viewRot);
+  renderTurnArc(t, midX, midY);
 
-  placeFoot(footGlyphL, elShadowL, elContactL, L);
-  placeFoot(footGlyphR, elShadowR, elContactR, R);
-  renderBadge("L", elBadgeL, L, t, viewRot);
-  renderBadge("R", elBadgeR, R, t, viewRot);
+  placeFoot(footGlyphL, elShadowL, elContactL, elBootL, L);
+  placeFoot(footGlyphR, elShadowR, elContactR, elBootR, R);
+  renderBadge("L", elBadgeL, L, t);
+  renderBadge("R", elBadgeR, R, t);
 
   const w = weightAt(t);
   const wf = w === "L" ? L : R;
   elGlow.setAttribute("cx", wf.x * SCALE);
   elGlow.setAttribute("cy", -wf.y * SCALE);
 
-  const dialRot = state.follow ? -state.viewTheta : 0;
+  const dialRot = curRot;
   elCompassLabels.setAttribute("transform", "rotate(" + dialRot + ")");
-  elCompassArrow.setAttribute("transform", "rotate(" + (state.follow ? 0 : state.viewTheta) + ")");
+  elCompassArrow.setAttribute("transform", "rotate(" + (state.viewTheta + curRot) + ")");
   for (const txt of elCompassLabels.children) {
     txt.setAttribute("transform",
       "rotate(" + (-dialRot) + " " + txt.getAttribute("x") + " " + (txt.getAttribute("y") - 3) + ")");
@@ -786,16 +877,35 @@ function render() {
   renderSheet(t);
 }
 
-function placeFoot(f, shadow, contact, s) {
-  const sx = s.x * SCALE, sy = -s.y * SCALE;
-  const scale = 1 + 0.15 * s.lift;
-  f.g.setAttribute("transform", "translate(" + sx + "," + sy + ") rotate(" + s.a + ") scale(" + scale + ")");
-  shadow.setAttribute("cx", sx + 4 * s.lift);
-  shadow.setAttribute("cy", sy + 8 * s.lift);
-  shadow.setAttribute("transform", "rotate(" + s.a + " " + sx + " " + sy + ")");
+// Feet live in screen space (the #dancer layer): the floor position is
+// projected through the tilted view, the glyph is squished like the floor,
+// and lift + boot shafts rise vertically on screen — which is what sells
+// the 3D once the camera is off to the side.
+function placeFoot(f, shadow, contact, boot, s) {
+  const [sx, sy] = worldToScreen(s.x, s.y);
+  const sa = s.a + curRot;
+  const rad = sa * Math.PI / 180;
+  const liftUp = s.lift * VIEW3D.liftPx * curSinTilt;
+  // top-down, lift reads as size; tilted, it reads as height instead
+  const scale = 1 + 0.15 * s.lift * (1 - curSinTilt);
+  f.g.setAttribute("transform",
+    "translate(" + sx + "," + (sy - liftUp) + ") scale(" + scale + "," + (scale * curTiltK) + ") rotate(" + sa + ")");
+  shadow.setAttribute("transform",
+    "translate(" + (sx + 4 * s.lift) + "," + (sy + 8 * s.lift * curTiltK) + ") scale(1," + curTiltK + ") rotate(" + sa + ")");
   shadow.setAttribute("opacity", 0.15 + 0.25 * s.lift);
   shadow.setAttribute("rx", 14 + 6 * s.lift);
   shadow.setAttribute("ry", 24 + 4 * s.lift);
+
+  // boot shaft: a thin ankle column from the heel, only visible when tilted
+  const shaftH = VIEW3D.shaft * curSinTilt + liftUp * 0.4;
+  if (curSinTilt > 0.03) {
+    const hx = sx - 16 * Math.sin(rad);
+    const hy = (sy - liftUp) + 16 * Math.cos(rad) * curTiltK;
+    boot.setAttribute("d", "M" + hx + "," + hy + " L" + hx + "," + (hy - shaftH));
+    boot.setAttribute("opacity", 0.85);
+  } else {
+    boot.setAttribute("opacity", 0);
+  }
 
   // pose shading: the raised part of the foot fades and drifts outward
   // slightly (closer to the camera), the touching part stays solid
@@ -807,32 +917,31 @@ function placeFoot(f, shadow, contact, s) {
   f.heel.setAttribute("opacity", heelOp);
   f.heel.setAttribute("transform", "scale(" + heelScale + ")");
 
-  // contact ring on the floor under the toe or heel
+  // contact ring on the floor under the toe or heel (stays on the floor
+  // even while the foot hovers above it)
   if ((s.pose === "toe" || s.pose === "heel") && s.settled) {
     const ly = s.pose === "toe" ? -14 : 18;
-    const rad = s.a * Math.PI / 180;
     const cx = sx - ly * Math.sin(rad);
-    const cy = sy + ly * Math.cos(rad);
-    contact.setAttribute("cx", cx);
-    contact.setAttribute("cy", cy);
-    contact.setAttribute("transform", "rotate(" + s.a + " " + cx + " " + cy + ")");
+    const cy = sy + ly * Math.cos(rad) * curTiltK;
+    contact.setAttribute("transform",
+      "translate(" + cx + "," + cy + ") scale(1," + curTiltK + ") rotate(" + sa + ")");
     contact.setAttribute("opacity", 0.75);
   } else {
     contact.setAttribute("opacity", 0);
   }
 }
 
-function worldToScreen(x, y, viewRot) {
+function worldToScreen(x, y) {
   const sx = (x - state.cam.x) * SCALE;
   const sy = (-y + state.cam.y) * SCALE;
-  const r = viewRot * Math.PI / 180;
+  const r = curRot * Math.PI / 180;
   return [VIEW_CX + sx * Math.cos(r) - sy * Math.sin(r),
-          VIEW_CY + sx * Math.sin(r) + sy * Math.cos(r)];
+          VIEW_CY + (sx * Math.sin(r) + sy * Math.cos(r)) * curTiltK];
 }
 
 // Named badge (KICK, HEEL, HOOK, ...) floating above a foot doing a special
 // move. Drawn in screen space so it stays upright while the floor rotates.
-function renderBadge(foot, el, s, t, viewRot) {
+function renderBadge(foot, el, s, t) {
   const arr = kf[foot];
   const i = findIdx(arr, t);
   const cur = arr[i];
@@ -847,7 +956,7 @@ function renderBadge(foot, el, s, t, viewRot) {
     if (age < 1.3) { badge = cur.badge; alpha = 0.95 * (1 - age / 1.3); }
   }
   if (!badge) { el.setAttribute("opacity", 0); return; }
-  const [bx, by] = worldToScreen(s.x, s.y, viewRot);
+  const [bx, by] = worldToScreen(s.x, s.y);
   el.setAttribute("transform", "translate(" + bx + "," + (by - 40) + ")");
   el.setAttribute("opacity", alpha);
   const text = el.querySelector("text");
@@ -921,7 +1030,7 @@ function renderImpact(foot, el, t) {
 }
 
 // Curved arrow around the dancer while facing changes over the last 1.5 beats.
-function renderTurnArc(t, midX, midY, viewRot) {
+function renderTurnArc(t, midX, midY) {
   const th0 = thetaAt(t - 1.5);
   const th1 = thetaAt(t);
   const dlt = th1 - th0;
@@ -967,7 +1076,7 @@ function renderTurnArc(t, midX, midY, viewRot) {
     elTurnLabel.setAttribute("x", tx);
     elTurnLabel.setAttribute("y", ty);
     // keep the label upright while the floor rotates in follow mode
-    elTurnLabel.setAttribute("transform", "rotate(" + (-viewRot) + " " + tx + " " + ty + ")");
+    elTurnLabel.setAttribute("transform", "rotate(" + (-curRot) + " " + tx + " " + ty + ")");
     elTurnLabel.textContent = near[1];
     elTurnLabel.setAttribute("opacity", alpha);
   } else {
@@ -1113,6 +1222,8 @@ function seek(t) {
   state.cam.x = (L.x + R.x) / 2;
   state.cam.y = (L.y + R.y) / 2;
   state.camLag = 0;
+  prevMid = null;
+  velSm.x = 0; velSm.y = 0;
   state.viewTheta = thetaAt(state.t);
   render();
 }
@@ -1213,6 +1324,7 @@ bindToggle("btn-loop-sec", "loopSection", () => {
   state.loopLen = sec.beats;
 });
 bindToggle("btn-follow", "follow");
+bindToggle("btn-3d", "view3d");
 bindToggle("btn-tick", "ticks", () => {
   if (state.ticks) {
     if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
