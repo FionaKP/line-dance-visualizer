@@ -6,16 +6,19 @@
 <title>Line Dance Visualizer</title>
 <style>
   :root {
-    --bg: #0f1117;
-    --panel: #181b24;
-    --panel-2: #1f2330;
-    --border: #2a2f3f;
-    --text: #e8eaf0;
-    --muted: #9aa0b0;
+    /* rustic-modern: warm espresso surfaces, leather-and-turquoise accents */
+    --bg: #191310;
+    --panel: #241c15;
+    --panel-2: #2d2318;
+    --border: #3e3122;
+    --text: #f0e9dc;
+    --muted: #a89a85;
     --left: #d64545;
     --right: #c98f52;
-    --accent: #8b9cf9;
+    --accent: #4fb3a9;
+    --accent-dim: #23332e;   /* dark-teal tint for active/toggled surfaces */
     --warn: #f0c05a;
+    --display: Rockwell, "Iowan Old Style", "Book Antiqua", Georgia, serif;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -27,7 +30,7 @@
   }
   .app { max-width: 1040px; margin: 0 auto; }
   header { margin-bottom: 16px; }
-  header h1 { font-size: 1.35rem; font-weight: 600; }
+  header h1 { font-family: var(--display); font-size: 1.55rem; font-weight: 700; letter-spacing: 0.01em; }
   header .meta { color: var(--muted); font-size: 0.85rem; margin-top: 4px; }
   header .meta a { color: var(--accent); text-decoration: none; }
   header .meta a:hover { text-decoration: underline; }
@@ -61,9 +64,10 @@
     min-height: 64px;
   }
   .now .count {
-    font-size: 2rem;
+    font-family: var(--display);
+    font-size: 2.3rem;
     font-weight: 700;
-    width: 52px;
+    width: 56px;
     text-align: center;
     color: var(--accent);
     font-variant-numeric: tabular-nums;
@@ -87,7 +91,7 @@
     transition: background 0.15s;
   }
   .progress .cell.sec-gap { margin-left: 8px; }
-  .progress .cell.done { background: #3d4358; }
+  .progress .cell.done { background: #4a3c29; }
   .progress .cell.active { background: var(--accent); }
 
   .controls {
@@ -117,7 +121,7 @@
     min-width: 76px;
   }
   button.toggled {
-    background: #2c3350;
+    background: var(--accent-dim);
     border-color: var(--accent);
     color: var(--accent);
   }
@@ -133,7 +137,13 @@
   .bpm .val { color: var(--text); min-width: 62px; font-variant-numeric: tabular-nums; }
 
   .sheet { padding: 14px 16px; }
-  .sheet h2 { font-size: 0.95rem; margin-bottom: 10px; }
+  .sheet h2, .search h2, .music h2, .loader summary {
+    font-family: var(--display);
+    font-size: 1rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+  }
+  .sheet h2 { margin-bottom: 10px; }
   .sheet .intro { color: var(--muted); font-size: 0.8rem; margin-bottom: 12px; }
   .sec-title {
     font-size: 0.72rem;
@@ -153,7 +163,7 @@
     border: 1px solid transparent;
   }
   .line:hover { background: var(--panel-2); }
-  .line.active { background: #262c44; border-color: var(--accent); }
+  .line.active { background: var(--accent-dim); border-color: var(--accent); }
   .line .counts {
     color: var(--accent);
     font-weight: 600;
@@ -185,7 +195,7 @@
   }
 
   .search { padding: 14px 16px; margin-bottom: 16px; }
-  .search h2 { font-size: 0.95rem; margin-bottom: 10px; }
+  .search h2 { margin-bottom: 10px; }
   .search-row { display: flex; gap: 8px; margin-bottom: 8px; }
   .search-row input[type=text] {
     flex: 1;
@@ -220,7 +230,7 @@
   .result .r-sub { color: var(--muted); font-size: 0.76rem; margin-top: 2px; }
 
   .music { padding: 14px 16px; margin-top: 16px; }
-  .music h2 { font-size: 0.95rem; margin-bottom: 10px; }
+  .music h2 { margin-bottom: 10px; }
   #player-wrap iframe { width: 100%; height: 210px; border: 0; border-radius: 8px; }
   .sync-controls {
     display: flex;
@@ -246,8 +256,6 @@
   .loader summary {
     cursor: pointer;
     padding: 12px 16px;
-    font-size: 0.9rem;
-    font-weight: 600;
   }
   .loader-body { padding: 0 16px 14px; }
   .loader textarea {
@@ -291,9 +299,9 @@
         <rect width="520" height="440" fill="#131722"/>
         <g id="world">
           <rect x="-3000" y="-3000" width="6000" height="6000" fill="url(#grid)"/>
-          <path id="turn-arc" fill="none" stroke="#8b9cf9" stroke-width="3" stroke-dasharray="7 6" stroke-linecap="round" opacity="0"/>
-          <path id="turn-arrow" fill="#8b9cf9" opacity="0"/>
-          <text id="turn-label" font-size="15" font-weight="700" fill="#8b9cf9" text-anchor="middle" opacity="0"></text>
+          <path id="turn-arc" fill="none" stroke="#4fb3a9" stroke-width="3" stroke-dasharray="7 6" stroke-linecap="round" opacity="0"/>
+          <path id="turn-arrow" fill="#4fb3a9" opacity="0"/>
+          <text id="turn-label" font-size="15" font-weight="700" fill="#4fb3a9" text-anchor="middle" opacity="0"></text>
           <circle id="dotL" r="5" fill="none" stroke="#d64545" stroke-width="2" opacity="0"/>
           <circle id="dotR" r="5" fill="none" stroke="#c98f52" stroke-width="2" opacity="0"/>
           <line id="trailL" stroke="#d64545" stroke-width="3" stroke-dasharray="6 7" stroke-linecap="round" opacity="0"/>
@@ -320,24 +328,24 @@
           <text id="bootLabR" font-size="10" font-weight="700" fill="#e6cba6" text-anchor="middle" opacity="0">R</text>
         </g>
         <g id="badgeL" opacity="0">
-          <rect rx="9" height="18" y="-13" fill="#12141c" stroke="#d64545" stroke-width="1.5"/>
+          <rect rx="9" height="18" y="-13" fill="#1a140e" stroke="#d64545" stroke-width="1.5"/>
           <text y="0" font-size="10" font-weight="700" fill="#d64545" text-anchor="middle"></text>
         </g>
         <g id="badgeR" opacity="0">
-          <rect rx="9" height="18" y="-13" fill="#12141c" stroke="#c98f52" stroke-width="1.5"/>
+          <rect rx="9" height="18" y="-13" fill="#1a140e" stroke="#c98f52" stroke-width="1.5"/>
           <text y="0" font-size="10" font-weight="700" fill="#c98f52" text-anchor="middle"></text>
         </g>
         <g id="compass" transform="translate(464, 52)">
-          <circle r="36" fill="#181b24" stroke="#2a2f3f"/>
-          <g id="compass-labels" font-size="9" fill="#9aa0b0" text-anchor="middle">
+          <circle r="36" fill="#241c15" stroke="#3e3122" fill-opacity="0.85"/>
+          <g id="compass-labels" font-size="9" fill="#a89a85" text-anchor="middle">
             <text x="0" y="-25">12:00</text>
             <text x="27" y="3">3</text>
             <text x="0" y="31">6</text>
             <text x="-27" y="3">9</text>
           </g>
-          <path id="compass-arrow" d="M0,-16 L6,6 L0,2 L-6,6 Z" fill="#8b9cf9"/>
+          <path id="compass-arrow" d="M0,-16 L6,6 L0,2 L-6,6 Z" fill="#4fb3a9"/>
         </g>
-        <text id="wall-label" x="16" y="28" font-size="12" fill="#9aa0b0"></text>
+        <text id="wall-label" x="16" y="28" font-size="12" fill="#a89a85"></text>
       </svg>
       <div class="progress" id="progress"></div>
       <div class="now">
