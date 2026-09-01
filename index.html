@@ -355,6 +355,7 @@
         <button id="btn-loop-sec" title="Repeat the current section">Loop section</button>
         <button id="btn-follow" title="Rotate the floor so forward is always up">Follow</button>
         <button id="btn-3d" title="Tilted perspective view with boots">3D</button>
+        <button id="btn-groove" title="Subtle human timing and sway; turn off for strict practice">Groove</button>
         <button id="btn-tick" title="Count clicks">Clicks</button>
         <div class="bpm">
           <span>Tempo</span>
@@ -577,22 +578,60 @@ let kf = { L: [], R: [] };
 let thetaKF = [];
 let weightKF = [];
 
-function buildTimeline() {
+// Which motion profile a step should use (see PROFILES below). The parser
+// doesn't export its KIND name, but badge + flags + the step text + how far
+// the foot travels identify the character of the move well enough.
+function stepProfile(ev, dist) {
+  if (ev.impact) return "stomp";
+  const b = ev.badge || "";
+  if (b === "KICK" || b === "SCUFF") return "kick";
+  if (b === "HOOK" || b === "KNEE") return "hook";
+  if (b === "SWEEP") return "sweep";
+  if (b === "SKATE") return "glide";
+  if (ev.self) return "pivot"; // swivels, heel/toe splits: twist, don't hop
+  if (b === "TOUCH" || b === "POINT" || b === "HEEL" || b === "TOE") return "place";
+  const txt = (ev.txt || "").toLowerCase();
+  if (/\brock\b/.test(txt)) return "rock";
+  if (/\b(drag|slide|glide)\b/.test(txt)) return "glide";
+  // short weighted steps (closes, shuffle closes) glide along the floor
+  if (!ev.lifted && dist < 0.75) return "drag";
+  return "step";
+}
+
+// Seed for the next pass of the dance: the exact feet/facing/weight state at
+// the end of the last wall, captured during buildTimeline so wrapLoop() can
+// rebuild the timeline as a true continuation instead of teleporting home.
+let nextLoopSeed = null;
+
+function lastPoseOf(arr) {
+  const k = arr[arr.length - 1];
+  return { lifted: !!k.lifted, pose: k.pose };
+}
+
+function buildTimeline(seed) {
   kf = { L: [], R: [] };
   thetaKF = [];
   weightKF = [];
-  let theta = 0;
-  const feet = { L: { x: -0.45, y: 0, a: 0 }, R: { x: 0.45, y: 0, a: 0 } };
-  kf.L.push({ t: -1, ...feet.L, lifted: false, pose: "flat", badge: null });
-  kf.R.push({ t: -1, ...feet.R, lifted: false, pose: "flat", badge: null });
-  thetaKF.push({ t: -1, theta: 0 });
-  weightKF.push({ t: -1, foot: "L" });
+  const cont = !!seed; // continuing a previous pass rather than starting fresh
+  let theta = cont ? seed.theta : 0;
+  const feet = cont
+    ? { L: { ...seed.feet.L }, R: { ...seed.feet.R } }
+    : { L: { x: -0.45, y: 0, a: 0 }, R: { x: 0.45, y: 0, a: 0 } };
+  const p0 = cont ? seed.poses
+    : { L: { lifted: false, pose: "flat" }, R: { lifted: false, pose: "flat" } };
+  kf.L.push({ t: -1, ...feet.L, lifted: p0.L.lifted, pose: p0.L.pose, badge: null });
+  kf.R.push({ t: -1, ...feet.R, lifted: p0.R.lifted, pose: p0.R.pose, badge: null });
+  thetaKF.push({ t: -1, theta });
+  weightKF.push({ t: -1, foot: cont ? seed.weight : "L" });
 
-  for (let wall = 0; wall < dance.walls; wall++) {
+  // note <=: one extra wall past the end. It is the seam into the next pass
+  // (wall turn included), so playback can cross the loop boundary on real
+  // keyframes before wrapLoop() re-bases the timeline.
+  for (let wall = 0; wall <= dance.walls; wall++) {
     for (const ev of dance.events) {
       const t = wall * WALL_BEATS + ev.beat;
       let turn = ev.turn || 0;
-      if (ev.beat === dance.events[0].beat && wall > 0 && ev === dance.events[0]) turn += dance.wallTurn;
+      if (ev === dance.events[0] && (wall > 0 || cont)) turn += dance.wallTurn;
       if (turn) {
         theta += turn;
         thetaKF.push({ t, theta });
@@ -602,21 +641,32 @@ function buildTimeline() {
           const curF = feet[f];
           const last = kf[f][kf[f].length - 1];
           feet[f] = { ...curF, a: theta };
-          kf[f].push({ t, x: curF.x, y: curF.y, a: theta, lifted: last.lifted, pose: last.pose, badge: null });
+          kf[f].push({ t, x: curF.x, y: curF.y, a: theta, lifted: last.lifted, pose: last.pose, badge: null, prof: "pivot" });
         }
       }
       if (ev.foot) {
-        const o = ev.self ? feet[ev.foot] : feet[other(ev.foot)];
+        const cur = feet[ev.foot];
+        const o = ev.self ? cur : feet[other(ev.foot)];
         const th = theta * Math.PI / 180;
         const x = o.x + ev.dx * Math.cos(th) + ev.dy * Math.sin(th);
         const y = o.y - ev.dx * Math.sin(th) + ev.dy * Math.cos(th);
         const a = theta + (ev.aOff || 0);
+        const dist = Math.hypot(x - cur.x, y - cur.y);
         feet[ev.foot] = { x, y, a };
         kf[ev.foot].push({ t, x, y, a, lifted: !!ev.lifted, pose: ev.pose || "flat",
-                           badge: ev.badge || null, impact: !!ev.impact });
+                           badge: ev.badge || null, impact: !!ev.impact,
+                           prof: stepProfile(ev, dist) });
         if (!ev.lifted && !ev.noWeight) weightKF.push({ t, foot: ev.foot });
       }
       if (ev.weight) weightKF.push({ t, foot: ev.weight });
+    }
+    if (wall === dance.walls - 1) {
+      nextLoopSeed = {
+        theta,
+        feet: { L: { ...feet.L }, R: { ...feet.R } },
+        poses: { L: lastPoseOf(kf.L), R: lastPoseOf(kf.R) },
+        weight: weightKF[weightKF.length - 1].foot
+      };
     }
   }
 }
@@ -650,6 +700,33 @@ function poseLift(k) {
   return k.pose === "air" ? 1 : 0.4;
 }
 
+// Per-move motion profiles: how each kind of step travels and lifts.
+//   pos: maps raw window progress -> position progress. Must end at exactly 1
+//        so every landing stays on its beat (this is a learning tool).
+//   arc: scales the lift arc (1 = the classic sine hop, ~0 = floor glide).
+//   win: stretches/shrinks how early the foot leaves the floor.
+//   snapLift: extra early lift overshoot (kicks snap out, then float).
+function backOut(r, c) { const u = r - 1; return 1 + (c + 1) * u * u * u + c * u * u; }
+const PROFILES = {
+  step:  {},                                                              // the classic: smoothstep + sine hop
+  drag:  { win: 1.25, arc: 0.18, pos: r => ease(Math.max(0, (r - 0.15) / 0.85)) }, // closes trail low along the floor, settle late
+  glide: { win: 1.3,  arc: 0.1,  pos: r => 0.5 - 0.5 * Math.cos(Math.PI * r) },    // skates/slides: steady leather-on-wood glide
+  rock:  { arc: 0.45, pos: r => backOut(ease(r), 1.2) },                  // lean past the spot, rebound onto it
+  kick:  { win: 0.9,  snapLift: 0.3, pos: r => 1 - Math.pow(1 - r, 3) },  // snap out fast, float at the top
+  hook:  { win: 0.85, arc: 0.5, pos: r => 1 - Math.pow(1 - r, 2) },       // quick tight tuck
+  sweep: { win: 1.35, arc: 1.15, pos: r => ease(ease(r)) },               // wide, floaty, extra-soft ends
+  place: { win: 1.1,  arc: 0.6 },                                        // touches/points set down gently
+  pivot: { arc: 0.08 },                                                  // swivel on the ball, no hop
+  stomp: {}                                                              // handled by the impact special case
+};
+
+// Deterministic per-step "humanizer": same beat + foot always grooves the
+// same way (no Math.random — reproducibility matters here).
+function grooveHash(seed, salt) {
+  const x = Math.sin(seed * 12.9898 + salt * 78.233) * 43758.5453;
+  return x - Math.floor(x);
+}
+
 function footState(foot, t) {
   const arr = kf[foot];
   const i = findIdx(arr, t);
@@ -657,22 +734,57 @@ function footState(foot, t) {
   const next = arr[i + 1];
   const base = { x: prev.x, y: prev.y, a: prev.a, lift: poseLift(prev), pose: prev.pose, settled: true };
   if (!next) return base;
-  const win = Math.min(MOVE_WINDOW, (next.t - prev.t) * 0.9);
+  const P = PROFILES[next.prof] || PROFILES.step;
+  let winScale = P.win || 1;
+  let arcAmp = P.arc === undefined ? 1 : P.arc;
+  let bow = 0;
+  if (state.groove) {
+    // hash on the landing's local beat so the groove repeats identically
+    // every pass through the dance (and across the loop seam)
+    const gb = ((next.t % TOTAL_BEATS) + TOTAL_BEATS) % TOTAL_BEATS;
+    const fs = foot === "L" ? 1 : 2;
+    winScale *= 0.91 + 0.18 * grooveHash(gb, fs);      // takeoff timing ±9% (landing untouched)
+    arcAmp *= 0.9 + 0.2 * grooveHash(gb, fs + 3);      // lift height ±10%
+    bow = (grooveHash(gb, fs + 7) - 0.5) * 0.1;        // slight curve in the travel path
+  }
+  const win = Math.min(MOVE_WINDOW * winScale, (next.t - prev.t) * 0.9);
   const start = next.t - win;
   if (t < start) return base;
   const raw = Math.min(1, (t - start) / win);
   const s = ease(raw);
   const prevLift = poseLift(prev), nextLift = poseLift(next);
-  // stomps rear up high and slam down early instead of gliding
-  const moveS = next.impact ? Math.min(1, s / 0.7) : s;
-  const lift = next.impact
-    ? Math.sin(Math.PI * Math.min(1, raw / 0.8)) * 1.5
-    : Math.max(Math.sin(Math.PI * s), prevLift + (nextLift - prevLift) * s);
+  if (next.impact) {
+    // stomps rear up high and slam down early instead of gliding
+    const moveS = Math.min(1, s / 0.7);
+    const lift = Math.sin(Math.PI * Math.min(1, raw / 0.8)) * 1.5;
+    return {
+      x: prev.x + (next.x - prev.x) * moveS,
+      y: prev.y + (next.y - prev.y) * moveS,
+      a: lerpAngle(prev.a, next.a, moveS),
+      lift: Math.max(lift, prevLift + (nextLift - prevLift) * s),
+      pose: s < 0.5 ? prev.pose : next.pose,
+      settled: s > 0.85
+    };
+  }
+  const sPos = P.pos ? P.pos(raw) : s;
+  let x = prev.x + (next.x - prev.x) * sPos;
+  let y = prev.y + (next.y - prev.y) * sPos;
+  if (bow) {
+    const dxT = next.x - prev.x, dyT = next.y - prev.y;
+    const d = Math.hypot(dxT, dyT);
+    if (d > 0.3) {
+      // perpendicular bow, zero at both endpoints so the landing is exact
+      const bs = bow * Math.min(1, d) * Math.sin(Math.PI * raw);
+      x += (-dyT / d) * bs;
+      y += (dxT / d) * bs;
+    }
+  }
+  let lift = Math.max(Math.sin(Math.PI * s) * arcAmp, prevLift + (nextLift - prevLift) * s);
+  if (P.snapLift) lift += P.snapLift * Math.sin(Math.PI * Math.pow(raw, 0.6));
   return {
-    x: prev.x + (next.x - prev.x) * moveS,
-    y: prev.y + (next.y - prev.y) * moveS,
-    a: lerpAngle(prev.a, next.a, moveS),
-    lift: Math.max(lift, prevLift + (nextLift - prevLift) * s),
+    x, y,
+    a: lerpAngle(prev.a, next.a, s),
+    lift,
     pose: s < 0.5 ? prev.pose : next.pose,
     settled: s > 0.85
   };
@@ -692,6 +804,37 @@ function thetaAt(t) {
 
 function weightAt(t) {
   return weightKF[findIdx(weightKF, t)].foot;
+}
+
+// Groove-mode hip glow: instead of snapping between feet on the beat, the
+// weight leans a little toward the foot about to take it (anticipation) and
+// then flows across during the transfer — the sway a dancer's hips have.
+function glowPos(t, L, R) {
+  const i = findIdx(weightKF, t);
+  const cur = weightKF[i];
+  const nxt = weightKF[i + 1];
+  const posOf = f => (f === "L" ? L : R);
+  const curF = posOf(cur.foot);
+  let x = curF.x, y = curF.y;
+  const LEAN = 0.25, LEAD = 0.3, T = 0.35;
+  if (i > 0 && weightKF[i - 1].foot !== cur.foot) {
+    const age = t - cur.t;
+    if (age < T) {
+      // flow from the old foot (starting from the anticipation lean it
+      // already had) onto the new one
+      const pf = posOf(weightKF[i - 1].foot);
+      const s = LEAN + (1 - LEAN) * ease(Math.max(0, age) / T);
+      x = pf.x + (curF.x - pf.x) * s;
+      y = pf.y + (curF.y - pf.y) * s;
+    }
+  }
+  if (nxt && nxt.foot !== cur.foot && t > nxt.t - LEAD) {
+    const nf = posOf(nxt.foot);
+    const s = ease((t - (nxt.t - LEAD)) / LEAD) * LEAN;
+    x += (nf.x - x) * s;
+    y += (nf.y - y) * s;
+  }
+  return { x, y };
 }
 
 function eventAt(t) {
@@ -786,6 +929,7 @@ const state = {
   loopSection: false,
   loopFrom: 0,
   loopLen: 8,
+  groove: true,
   introCountdown: null,
   cam: { x: 0, y: 0 },
   camLag: 0,
@@ -931,7 +1075,7 @@ function render() {
   renderBadge("R", elBadgeR, R, t);
 
   const w = weightAt(t);
-  const wf = w === "L" ? L : R;
+  const wf = state.groove ? glowPos(t, L, R) : (w === "L" ? L : R);
   elGlow.setAttribute("cx", wf.x * SCALE);
   elGlow.setAttribute("cy", -wf.y * SCALE);
 
@@ -1340,6 +1484,52 @@ function reanchor() {
   anchorT = state.t;
 }
 
+// --- seamless end-of-dance wrap -------------------------------------------
+// The timeline carries one extra "seam" wall past TOTAL_BEATS (built with the
+// wall turn applied), so playback crosses the loop boundary on real
+// keyframes. A couple of beats later — after every lookback effect (turn arc
+// 1.5, badge fade 1.3, trails 1.4) has cleared the seam — wrapLoop() rebuilds
+// the timeline as a true continuation from where the pass actually ended and
+// pulls time back by one pass. World positions are identical before and
+// after, so boots and camera keep moving with no teleport; the dancer drifts
+// across the infinite floor instead, exactly like a real 4-wall dance.
+function loopGrace() {
+  return Math.min(2, WALL_BEATS / 2);
+}
+
+function wrapLoop() {
+  while (state.t >= TOTAL_BEATS + loopGrace()) {
+    recenterWorld();
+    buildTimeline(nextLoopSeed);
+    state.t -= TOTAL_BEATS;
+    anchorT -= TOTAL_BEATS;
+  }
+  state.lastBeatInt = Math.floor(state.t);
+}
+
+// Guard against float blowup after hours of unbounded drift: shift the whole
+// world (next pass's seed) and the camera by the same offset — invisible on
+// screen, since everything renders relative to the camera. Facing angles are
+// normalized by whole turns every pass (also invisible; all consumers are
+// mod-360 safe).
+function recenterWorld() {
+  const s = nextLoopSeed;
+  if (!s) return;
+  const dTh = 360 * Math.floor(s.theta / 360);
+  if (dTh) {
+    s.theta -= dTh;
+    s.feet.L.a -= dTh;
+    s.feet.R.a -= dTh;
+  }
+  const ox = Math.round(s.feet.L.x), oy = Math.round(s.feet.L.y);
+  if (Math.abs(ox) > 1000 || Math.abs(oy) > 1000) {
+    for (const f of ["L", "R"]) { s.feet[f].x -= ox; s.feet[f].y -= oy; }
+    state.cam.x -= ox;
+    state.cam.y -= oy;
+    if (prevMid) { prevMid.x -= ox; prevMid.y -= oy; }
+  }
+}
+
 function frame() {
   if (music.synced && ytPlayer && ytPlayer.getPlayerState) {
     // the video playhead is the clock
@@ -1362,10 +1552,7 @@ function frame() {
     if (state.loopSection && state.t >= state.loopFrom + state.loopLen) {
       seek(state.loopFrom + (state.t - state.loopFrom) % state.loopLen);
     }
-    if (state.t >= TOTAL_BEATS) {
-      state.lastBeatInt = -1;
-      seek(state.t % TOTAL_BEATS);
-    }
+    if (state.t >= TOTAL_BEATS + loopGrace()) wrapLoop();
     const beatInt = Math.floor(state.t);
     if (beatInt !== state.lastBeatInt) {
       state.lastBeatInt = beatInt;
@@ -1427,6 +1614,7 @@ bindToggle("btn-loop-sec", "loopSection", () => {
 });
 bindToggle("btn-follow", "follow");
 bindToggle("btn-3d", "view3d");
+bindToggle("btn-groove", "groove");
 bindToggle("btn-tick", "ticks", () => {
   if (state.ticks) {
     if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
