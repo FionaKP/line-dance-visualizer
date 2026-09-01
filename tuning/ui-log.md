@@ -91,3 +91,34 @@ flip state and class, play glyph swaps ▶/❚❚, nudges move `music.start`
 
 Verdict: keep. Nothing lost, transport row went from 11 mixed-width text
 buttons to 4 icons + 1 cluster + slider.
+
+## Iteration 4 — hierarchy polish
+
+Hypothesis: with palette, floor and controls done, the page still needs the
+"one designed product" pass: the now-playing readout should be the hero
+after the floor, and the leftovers (sprawling legend, cramped filters)
+betray the old design.
+
+Change: step readout up to 1.05rem/500 under the 2.3rem serif count
+numeral; cards get a hairline warm inner highlight + soft drop shadow;
+legend tightened to one 0.72rem line with a lamp-warm glow dot; search
+filter row wraps at a sane 88px minimum instead of squeezing labels into
+"Copperk / Any leve / Min co".
+
+Found while screenshotting: a pre-existing grid blowout (also on main) —
+the right column's intrinsic width pushed `scrollWidth` to 1307px at a
+1280px viewport, so both columns hung past the page edge. `min-width: 0`
+on the grid children fixes it; the layout now ends flush at 1280
+(`scrollWidth` 1280).
+
+Screenshots: full page at count 5 mid-dance (teal "5 6" line highlighted in
+the sheet, trail dashes on the walnut), search results list for "texas"
+(20 CopperKnob rows, teal titles on warm panels), fine-tune disclosure open
+and closed. Controls verified by dispatching events on every button and
+Space/arrow keys after the restructure; `node tests/run.js` 96/96.
+
+Verdict: keep. Final inventory — always visible: play, restart, prev,
+next, Loop/Follow/3D/Groove/Clicks cluster, tempo slider, dance Search,
+music Auto match + Search, Sync to video. Behind one disclosure: count-1
+input, Set to now, From lyrics, four nudges, Tap tempo. Behind the
+existing loader disclosure: paste box + Parse and load. Nothing removed.
