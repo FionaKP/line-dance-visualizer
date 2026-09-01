@@ -563,22 +563,40 @@ let kf = { L: [], R: [] };
 let thetaKF = [];
 let weightKF = [];
 
-function buildTimeline() {
+// Seed for the next pass of the dance: the exact feet/facing/weight state at
+// the end of the last wall, captured during buildTimeline so wrapLoop() can
+// rebuild the timeline as a true continuation instead of teleporting home.
+let nextLoopSeed = null;
+
+function lastPoseOf(arr) {
+  const k = arr[arr.length - 1];
+  return { lifted: !!k.lifted, pose: k.pose };
+}
+
+function buildTimeline(seed) {
   kf = { L: [], R: [] };
   thetaKF = [];
   weightKF = [];
-  let theta = 0;
-  const feet = { L: { x: -0.45, y: 0, a: 0 }, R: { x: 0.45, y: 0, a: 0 } };
-  kf.L.push({ t: -1, ...feet.L, lifted: false, pose: "flat", badge: null });
-  kf.R.push({ t: -1, ...feet.R, lifted: false, pose: "flat", badge: null });
-  thetaKF.push({ t: -1, theta: 0 });
-  weightKF.push({ t: -1, foot: "L" });
+  const cont = !!seed; // continuing a previous pass rather than starting fresh
+  let theta = cont ? seed.theta : 0;
+  const feet = cont
+    ? { L: { ...seed.feet.L }, R: { ...seed.feet.R } }
+    : { L: { x: -0.45, y: 0, a: 0 }, R: { x: 0.45, y: 0, a: 0 } };
+  const p0 = cont ? seed.poses
+    : { L: { lifted: false, pose: "flat" }, R: { lifted: false, pose: "flat" } };
+  kf.L.push({ t: -1, ...feet.L, lifted: p0.L.lifted, pose: p0.L.pose, badge: null });
+  kf.R.push({ t: -1, ...feet.R, lifted: p0.R.lifted, pose: p0.R.pose, badge: null });
+  thetaKF.push({ t: -1, theta });
+  weightKF.push({ t: -1, foot: cont ? seed.weight : "L" });
 
-  for (let wall = 0; wall < dance.walls; wall++) {
+  // note <=: one extra wall past the end. It is the seam into the next pass
+  // (wall turn included), so playback can cross the loop boundary on real
+  // keyframes before wrapLoop() re-bases the timeline.
+  for (let wall = 0; wall <= dance.walls; wall++) {
     for (const ev of dance.events) {
       const t = wall * WALL_BEATS + ev.beat;
       let turn = ev.turn || 0;
-      if (ev.beat === dance.events[0].beat && wall > 0 && ev === dance.events[0]) turn += dance.wallTurn;
+      if (ev === dance.events[0] && (wall > 0 || cont)) turn += dance.wallTurn;
       if (turn) {
         theta += turn;
         thetaKF.push({ t, theta });
@@ -603,6 +621,14 @@ function buildTimeline() {
         if (!ev.lifted && !ev.noWeight) weightKF.push({ t, foot: ev.foot });
       }
       if (ev.weight) weightKF.push({ t, foot: ev.weight });
+    }
+    if (wall === dance.walls - 1) {
+      nextLoopSeed = {
+        theta,
+        feet: { L: { ...feet.L }, R: { ...feet.R } },
+        poses: { L: lastPoseOf(kf.L), R: lastPoseOf(kf.R) },
+        weight: weightKF[weightKF.length - 1].foot
+      };
     }
   }
 }
@@ -1276,6 +1302,52 @@ function reanchor() {
   anchorT = state.t;
 }
 
+// --- seamless end-of-dance wrap -------------------------------------------
+// The timeline carries one extra "seam" wall past TOTAL_BEATS (built with the
+// wall turn applied), so playback crosses the loop boundary on real
+// keyframes. A couple of beats later — after every lookback effect (turn arc
+// 1.5, badge fade 1.3, trails 1.4) has cleared the seam — wrapLoop() rebuilds
+// the timeline as a true continuation from where the pass actually ended and
+// pulls time back by one pass. World positions are identical before and
+// after, so boots and camera keep moving with no teleport; the dancer drifts
+// across the infinite floor instead, exactly like a real 4-wall dance.
+function loopGrace() {
+  return Math.min(2, WALL_BEATS / 2);
+}
+
+function wrapLoop() {
+  while (state.t >= TOTAL_BEATS + loopGrace()) {
+    recenterWorld();
+    buildTimeline(nextLoopSeed);
+    state.t -= TOTAL_BEATS;
+    anchorT -= TOTAL_BEATS;
+  }
+  state.lastBeatInt = Math.floor(state.t);
+}
+
+// Guard against float blowup after hours of unbounded drift: shift the whole
+// world (next pass's seed) and the camera by the same offset — invisible on
+// screen, since everything renders relative to the camera. Facing angles are
+// normalized by whole turns every pass (also invisible; all consumers are
+// mod-360 safe).
+function recenterWorld() {
+  const s = nextLoopSeed;
+  if (!s) return;
+  const dTh = 360 * Math.floor(s.theta / 360);
+  if (dTh) {
+    s.theta -= dTh;
+    s.feet.L.a -= dTh;
+    s.feet.R.a -= dTh;
+  }
+  const ox = Math.round(s.feet.L.x), oy = Math.round(s.feet.L.y);
+  if (Math.abs(ox) > 1000 || Math.abs(oy) > 1000) {
+    for (const f of ["L", "R"]) { s.feet[f].x -= ox; s.feet[f].y -= oy; }
+    state.cam.x -= ox;
+    state.cam.y -= oy;
+    if (prevMid) { prevMid.x -= ox; prevMid.y -= oy; }
+  }
+}
+
 function frame() {
   if (music.synced && ytPlayer && ytPlayer.getPlayerState) {
     // the video playhead is the clock
@@ -1298,10 +1370,7 @@ function frame() {
     if (state.loopSection && state.t >= state.loopFrom + state.loopLen) {
       seek(state.loopFrom + (state.t - state.loopFrom) % state.loopLen);
     }
-    if (state.t >= TOTAL_BEATS) {
-      state.lastBeatInt = -1;
-      seek(state.t % TOTAL_BEATS);
-    }
+    if (state.t >= TOTAL_BEATS + loopGrace()) wrapLoop();
     const beatInt = Math.floor(state.t);
     if (beatInt !== state.lastBeatInt) {
       state.lastBeatInt = beatInt;
