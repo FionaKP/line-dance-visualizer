@@ -784,6 +784,7 @@ function buildTimeline(seed) {
         feet[ev.foot] = { x, y, a };
         kf[ev.foot].push({ t, x, y, a, lifted: !!ev.lifted, pose: ev.pose || "flat",
                            badge: ev.badge || null, impact: !!ev.impact,
+                           dxo: ev.self ? undefined : ev.dx, dyo: ev.dy,
                            prof: stepProfile(ev, dist) });
         if (!ev.lifted && !ev.noWeight) weightKF.push({ t, foot: ev.foot });
       }
@@ -860,13 +861,22 @@ function kfAttitude(k, foot) {
   if (!k) return null;
   const sgn = foot === "R" ? 1 : -1; // mirror side-dependent moves
   if (k.pose === "heel") return { pitch: -30, roll: 0, yawOff: 0, bend: 0.55, anchor: "heel" };
-  if (k.pose === "toe")  return { pitch: 42, roll: 0, yawOff: 0, bend: 0.3, anchor: "toe" };
+  if (k.pose === "toe") {
+    // near-vertical toe point (footage: twinkle-toes 70-80deg, canadian ~75,
+    // sambas ~55); a touch tight beside the other foot pigeons slightly inward
+    const beside = k.badge === "TOUCH" && k.dxo !== undefined &&
+                   Math.abs(k.dxo) < 1.1 && Math.abs(k.dyo) < 0.3;
+    return { pitch: 55, roll: 0, yawOff: beside ? -12 * sgn : 0, bend: 0.3, anchor: "toe" };
+  }
   const b = k.badge;
   if (b === "HOOK")  return { pitch: 35, roll: 14 * sgn, yawOff: -30 * sgn, bend: 0.5, anchor: null };
   if (b === "KNEE")  return { pitch: 48, roll: 0, yawOff: 0, bend: 0.5, anchor: null };
-  if (b === "KICK")  return { pitch: -20, roll: 0, yawOff: 0, bend: 0.8, anchor: null };
+  if (b === "KICK")  return { pitch: -32, roll: 0, yawOff: 0, bend: 0.8, anchor: null };
   if (b === "SCUFF") return { pitch: -16, roll: 0, yawOff: 0, bend: 0.8, anchor: null };
-  if (b === "SWEEP") return { pitch: 10, roll: -8 * sgn, yawOff: 0, bend: 0.6, anchor: null };
+  if (b === "SWEEP") return { pitch: 30, roll: -8 * sgn, yawOff: 0, bend: 0.6, anchor: null };
+  // locked boot tucks on the ball, heel popped high (amame ~40-45, springy
+  // ankle-cross locks in ten-thirty-five); toe anchored so the ball stays down
+  if (b === "LOCK")  return { pitch: 35, roll: 0, yawOff: 0, bend: 0.4, anchor: "toe" };
   return null;
 }
 
@@ -971,10 +981,28 @@ function footState(foot, t) {
 // blended attitude for a foot mid-window, plus per-move flourishes that only
 // exist while the foot travels (zero at both ends, so landings never snap)
 function moveAttitude(prev, next, foot, s, raw) {
-  const att = blendAttitude(kfAttitude(prev, foot), kfAttitude(next, foot), s);
+  let att = blendAttitude(kfAttitude(prev, foot), kfAttitude(next, foot), s);
   if (att && next.badge === "SWEEP") {
     // the sweeping toe fans outward through the arc and settles back
     att.yawOff += (foot === "R" ? 22 : -22) * Math.sin(Math.PI * raw);
+  }
+  // Landing-roll transients: how the sole meets the wood, zero by raw = 1 so
+  // the landing frame (and the beat) is untouched. Plain steps strike
+  // heel-first and roll flat (sambas heel strikes toe-up 15-20, cupid side
+  // steps); rocks/locks transfer ball-first, toe dipped through the middle
+  // (amame's ball-only back rocks).
+  if (!next.lifted && !next.impact && next.pose === "flat") {
+    const prof = next.prof || "step";
+    let tPitch = 0;
+    if (prof === "step" && raw > 0.7) {
+      tPitch = -12 * Math.sin(Math.PI * (raw - 0.7) / 0.3);
+    } else if (prof === "rock") {
+      tPitch = 18 * Math.sin(Math.PI * raw);
+    }
+    if (tPitch) {
+      if (!att) att = { ...ATT_FLAT, anchorW: 0 };
+      att.pitch += tPitch;
+    }
   }
   return att;
 }
@@ -999,6 +1027,22 @@ function weightAt(t) {
 // drags and glides); a transfer reads as a quick fade-in under the new
 // foot rather than a blob sliding across the floor.
 const glowAnim = { foot: null, tAt: -1 };
+
+// Free-heel pop: whichever boot is NOT carrying weight eases its heel a few
+// cm off the floor (toe stays planted) — the constant boot-level micro-action
+// every video shows (cupid-shuffle calls it the dominant texture; amame pops
+// the free heel on every rock/lock/close). 3D-boot-only; tracked per foot so
+// the pop re-eases from flat each time weight transfers.
+const heelPop = { L: { since: -1e9 }, R: { since: -1e9 }, w: null, t: -1e9 };
+function updateHeelPop(t) {
+  const w = weightAt(t);
+  if (t < heelPop.t - 1e-6) { heelPop.L.since = heelPop.R.since = t; } // seek back: restart
+  if (w !== heelPop.w) {
+    heelPop[w === "L" ? "R" : "L"].since = t; // the newly-free foot starts popping
+    heelPop.w = w;
+  }
+  heelPop.t = t;
+}
 
 function eventAt(t) {
   const beat = ((t % WALL_BEATS) + WALL_BEATS) % WALL_BEATS;
@@ -1237,6 +1281,7 @@ function render() {
   renderImpact("R", elImpactR, t);
   renderTurnArc(t, midX, midY);
 
+  updateHeelPop(t);
   placeFoot(footGlyphL, elShadowL, elContactL, elBootL, L);
   placeFoot(footGlyphR, elShadowR, elContactR, elBootR, R);
   renderBadge("L", elBadgeL, L, t);
@@ -1307,6 +1352,15 @@ function placeFoot(f, shadow, contact, boot, s) {
       pitch = att.pitch; roll = att.roll; yawOff = att.yawOff; bend = att.bend ?? 1;
       pivot = BOOT_PIVOTS[att.anchor] || null;
       bootLift = liftUp * (1 - (att.anchorW || 0));
+    } else if (s.settled && !s.lift && s.pose === "flat" && side !== heelPop.w) {
+      // free-heel pop: the unweighted settled boot eases its heel up a touch,
+      // toe anchored so the ball stays on the wood (boot-only micro-texture)
+      const p = ease(Math.max(0, Math.min(1, (heelPop.t - heelPop[side].since) / 0.15)));
+      if (p > 0) {
+        pitch = 14 * p;
+        bend = 1 - 0.5 * p;
+        pivot = BOOT_PIVOTS.toe;
+      }
     }
     renderBoot3D(boot, BOOT_MESH, BOOT_STITCHES, {
       sx, sy, yaw: sa + yawOff, liftPx: bootLift, scale: bScale,
