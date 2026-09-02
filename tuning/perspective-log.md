@@ -378,3 +378,59 @@ Before/after (60fps sim, warm 4 beats):
 - The turn-arc label bands (¼/½/¾) still read off the trailing window and
   briefly show ¼ as a half turn exits the window — pre-existing; a
   peak-latching label would fix it.
+
+# Round 3: footage-driven style pass (camera)
+
+Full iteration narrative lives in tuning/camera-style-log.md; this section
+records the law changes and their numbers, continuing rounds 1-2. New
+VIEW3D knobs (all URL-overridable): spiralAfter 1.5, spiralRamp 1.0,
+spiralHold 0.5, spiralDecay 2 (beats), camDead 0.15 (units), azimDead 1.5
+(deg), thudPx 2 (px). `spiralAfter=9999&camDead=0&azimDead=0&thudPx=0`
+restores round-2 behavior exactly (verified bit-identical sim output).
+
+## Law changes
+
+1. **Long-spiral hold release.** The rotHold freeze now releases on
+   sustained turning: a leaky integrator of turn-phrase time (turning
+   frames + the rotSettle windows that bridge a parsed spiral's per-count
+   bursts; decay tc = spiralDecay beats when the phrase ends) ramps the
+   effective hold 0.12 -> 0.5 between 1.5 and 2.5 accumulated beats.
+   3D-only. Wall-2 sims @100bpm: sambas-and-sailors maxLag 235.5 -> 128.4,
+   picnic-polka 224.4 -> 134.9, ten-thirty-five 296.6 -> 274.5; Pivot Test
+   per-turn maxErr within 0.5 deg of round 2 (full-pivot freeze intact);
+   Choosin' Texas wall 2 maxLag 168.4 unchanged.
+
+2. **Stillness deadband.** Settled recenter pull skipped inside camDead
+   0.15 units; azimuth parked when its error < azimDead 1.5 deg. 3D-only
+   (an early shared version left the 2D view with a permanent ~1.5 deg
+   residual rotation — caught and gated). canadian-stomp holds: 17-18 px/s
+   camera drift and ~0.5 deg/s azimuth creep -> 0.00 during every settled
+   hold; corpus avgCam down across all 25 sheets (e.g. cupid-shuffle
+   0.46 -> 0.32 u/s) with no other stat moving.
+
+3. **Impact thud.** state.thud = thudPx * exp(-age/55ms) (zero past 200 ms,
+   summed over feet, capped 1.4x, scaled by curSinTilt) added to the #world
+   vertical translate on impact-keyframe landings. Pure function of t —
+   deterministic across scrubs, sims, loop passes; floor coordinates and
+   timing untouched; 2D transform byte-identical.
+
+4. **Loop-seam teleport snap.** A dancer-mid jump > 1.5 units/frame (only
+   teleports move that fast) snaps cam/velSm/rotation state to the new
+   position and fades #world 0.25 -> 1 over 250 ms. Closes rounds 1-2's
+   standing "wrap teleport ~10 u/s" note: forced synced-style jump now
+   peaks at the ordinary 2.57 u/s. Free-run loops never trigger it (the
+   seam wall keeps them continuous; verified endMid == startMid across the
+   corpus).
+
+## Final corpus sweep (25 sheets, wall 2, 100 bpm)
+
+worstMaxRot 134 / worstMaxCam 5.57 / unsettledTurns 31 — all unchanged from
+round 2; worstMaxLag 360 -> 357.4 (amame full unwind, deliberately frozen).
+node tests/run.js: 172/172.
+
+## Known pre-existing issue (reproduced on origin/main, not touched)
+
+While the YT player initializes after loading a sheet with music, frame()'s
+synced branch computes state.t = NaN for a few frames (getCurrentTime /
+music.start race) and render() logs NaN-attribute console errors until the
+player readies. Playback code, outside camera territory.
