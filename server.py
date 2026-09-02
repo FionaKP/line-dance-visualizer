@@ -156,6 +156,14 @@ class Handler(SimpleHTTPRequestHandler):
         qs = urllib.parse.parse_qs(parsed.query)
 
         try:
+            if parsed.path == "/api/ping":
+                # feature probe: the page asks this on load to decide between
+                # full server mode and static mode. Answered here it shadows
+                # the checked-in api/ping file, whose {"mode": "static"} is
+                # what a static host (GitHub Pages) serves instead.
+                self.send_json({"ok": True, "mode": "server"})
+                return
+
             if parsed.path == "/api/search":
                 q = qs.get("q", [""])[0]
                 which = qs.get("source", ["copperknob"])[0]
