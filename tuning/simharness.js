@@ -118,3 +118,55 @@ window.__loadPivotSheet = function () {
   document.getElementById('btn-load').click();
   return { walls: dance.walls, wallBeats: WALL_BEATS, total: TOTAL_BEATS };
 };
+
+// --- corpus tools (camera style round) -------------------------------------
+// Load any tuning/corpus sheet through the app's own paste panel, and sweep
+// the whole corpus through __sim for aggregate camera stats. Sims pin the bpm
+// (async music lookups make it racy) and use wall 2 when one exists so the
+// warmup never crosses the loop seam.
+window.__loadSheetText = function (text) {
+  document.getElementById('sheet-input').value = text;
+  document.getElementById('btn-load').click();
+  return { walls: dance.walls, wallBeats: WALL_BEATS, total: TOTAL_BEATS };
+};
+
+window.__loadCorpusSheet = async function (slug) {
+  const text = await (await fetch('/tuning/corpus/' + slug + '.txt')).text();
+  return window.__loadSheetText(text);
+};
+
+window.__simCorpus = async function (slugs, opts = {}) {
+  if (!slugs) {
+    const idx = await (await fetch('/tuning/corpus/INDEX.md')).text();
+    slugs = [...idx.matchAll(/^\| \[([\w-]+)\]/gm)].map(m => m[1]);
+  }
+  const out = {};
+  for (const slug of slugs) {
+    try {
+      const meta = await window.__loadCorpusSheet(slug);
+      state.bpm = opts.bpm || 100;
+      const wall = meta.walls > 1 ? 1 : 0;
+      const r = window.__sim(wall * meta.wallBeats, meta.wallBeats,
+                             Math.min(4, meta.wallBeats / 2));
+      const unsettled = r.analysis.turns.filter(u => u.catchupBeats === 'unsettled').length;
+      out[slug] = {
+        wallBeats: meta.wallBeats, walls: meta.walls,
+        maxRot: r.stats.maxRotRate, avgRot: r.stats.avgRotRate,
+        maxCam: r.stats.maxCamSpeed, avgCam: r.stats.avgCamSpeed,
+        maxFollow: r.stats.maxFollowRate, maxLag: r.stats.maxLagDeg,
+        turns: r.analysis.turns.length, unsettled
+      };
+    } catch (e) {
+      out[slug] = { error: String(e) };
+    }
+  }
+  const ok = Object.values(out).filter(r => !r.error);
+  out._agg = {
+    sheets: ok.length,
+    worstMaxRot: +Math.max(...ok.map(r => r.maxRot)).toFixed(1),
+    worstMaxCam: +Math.max(...ok.map(r => r.maxCam)).toFixed(2),
+    worstMaxLag: +Math.max(...ok.map(r => r.maxLag)).toFixed(1),
+    unsettledTurns: ok.reduce((s, r) => s + r.unsettled, 0)
+  };
+  return out;
+};
