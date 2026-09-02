@@ -655,6 +655,25 @@ const VIEW3D = {
                    // the camera all but freezes so the turn reads in the boots
   rotSettle: 0.6,  // beats the hold lingers after the facing stops moving, so a
                    // multi-part turn (full pivot) reads as one phrase before the pan
+  spiralAfter: 1.5,// beats of accumulated boot rotation before the freeze starts to
+                   // release: lone pivots/quarters stay frozen-then-pan, but a
+                   // sustained multi-count spiral (3/4 turning walks, chained
+                   // triples) lets the camera start trailing instead of freezing
+                   // for 6 counts and then panning 270 deg
+  spiralRamp: 1.0, // beats over which the release ramps from rotHold up to spiralHold
+  spiralDecay: 2,  // beats: time constant of the turning accumulator's decay while
+                   // the boots are NOT rotating — dense turn clusters (a 9-turn
+                   // wall) keep accumulating across their gaps, while a full
+                   // pivot's two short swivels (0.4 beats each, 1.6 apart) decay
+                   // back to ~nothing and keep the round-2 freeze
+  spiralHold: 0.5, // fraction of rotVmax available once a long spiral has fully
+                   // released the hold — the camera trails the turn, still slower
+                   // than the boots so the rotation keeps reading in them
+  camDead: 0.15,   // floor units: inside this the settled recenter pull is skipped
+                   // entirely so holds are dead still (no exponential-tail drift)
+  azimDead: 1.5,   // deg: azimuth error smaller than this is ignored — the side
+                   // angle parks instead of creeping during stillness
+  thudPx: 2,       // px of vertical frame dip when a stomp lands (0 disables)
   rotAccel: 0.15,  // per-frame ease of the pan speed itself (1 = instant; <1 makes
                    // the catch-up pan accelerate and brake like a hand on a tripod)
   tiltRate: 0.05,  // per-frame ease of the tilt toggle transition
@@ -1082,7 +1101,7 @@ const VIEW_CX = 260, VIEW_CY = 215;
 // per-frame view pose shared by render helpers
 let curRot = 0, curTiltK = 1, curSinTilt = 0;
 let velSm = { x: 0, y: 0 }, prevMid = null, lastFrameMs = null, prevTheta = null,
-    lastTurnMs = null;
+    lastTurnMs = null, turnAccumS = 0, seamFadeMs = null;
 
 // ---------------------------------------------------------------------------
 // Playback state
@@ -1107,6 +1126,7 @@ const state = {
   viewTheta: 0,
   rotErr: 0,
   rotVel: 0,
+  thud: 0,
   lastBeatInt: -1
 };
 
@@ -1141,6 +1161,30 @@ function render() {
   const theta = thetaAt(t);
   const midX = (L.x + R.x) / 2, midY = (L.y + R.y) / 2;
 
+  const nowMs = performance.now();
+  const rawDt = lastFrameMs === null ? 1 / 60 : Math.min(0.1, (nowMs - lastFrameMs) / 1000);
+  const dt = rawDt > 0 ? rawDt : 1 / 60;
+  lastFrameMs = nowMs;
+
+  // loop-seam teleport: when playback (music-synced wrap, sim wrap) renumbers
+  // t and the dancer jumps home in a single frame, don't let the leash sprint
+  // the camera across the floor at ~10 u/s — snap the camera and the velocity
+  // filter to the new position and blink the world over ~250 ms instead, so
+  // the wall boundary flows (the footage law: the last sweep of a wall IS the
+  // next wall's count 1, never a jolt). Real dancing never moves the mid more
+  // than a fraction of a unit per frame, so the threshold can't misfire.
+  if (prevMid && Math.hypot(midX - prevMid.x, midY - prevMid.y) > 1.5) {
+    state.cam.x = midX; state.cam.y = midY;
+    state.camLag = 0;
+    velSm.x = 0; velSm.y = 0;
+    prevMid = { x: midX, y: midY };
+    prevTheta = null;
+    lastTurnMs = null; turnAccumS = 0;
+    state.rotErr = 0; state.rotVel = 0;
+    state.viewTheta = theta;
+    seamFadeMs = nowMs;
+  }
+
   // camera with intent: while the dancer travels it barely follows, letting
   // the feet drift off-center so the motion reads on screen; once the feet
   // settle it glides back to center so the dance stays easy to follow
@@ -1149,7 +1193,12 @@ function render() {
   const dist = Math.hypot(errX, errY);
   const traveling = !L.settled || !R.settled;
   state.camLag = Math.min(1, Math.max(0, state.camLag + (traveling ? 0.10 : -0.035)));
-  if (dist > 1e-4) {
+  // stillness deadband: inside camDead the recenter pull is skipped entirely —
+  // the exponential tail otherwise drifts the frame sub-pixel for seconds
+  // after every figure, and the footage is explicit that holds are dead still
+  // (motion / dead stop is the style's contrast). 3D-only, like every new
+  // style behavior: the classic 2D view keeps its exact old camera feel.
+  if (dist > (state.view3d ? VIEW3D.camDead : 1e-4)) {
     let pull = 0.12 - 0.10 * state.camLag;
     // hard leash: past CAM_MAX_LEAD the camera is dragged along regardless
     const excess = dist - CAM_MAX_LEAD;
@@ -1162,10 +1211,6 @@ function render() {
   // than rotVmax deg/s. The error is tracked unwrapped so back-to-back turns
   // in one direction (a full pivot) keep the pan going the same way instead
   // of flipping around the "short" side. ---
-  const nowMs = performance.now();
-  const rawDt = lastFrameMs === null ? 1 / 60 : Math.min(0.1, (nowMs - lastFrameMs) / 1000);
-  const dt = rawDt > 0 ? rawDt : 1 / 60;
-  lastFrameMs = nowMs;
   if (prevTheta === null) prevTheta = theta;
   let dTh = theta - prevTheta;
   prevTheta = theta;
@@ -1177,10 +1222,29 @@ function render() {
   // panning a full circle; mid-turn the error stays unwrapped so the pan never
   // flips direction while the boots are still rotating
   if (!turning && Math.abs(state.rotErr) > 200) state.rotErr -= 360 * Math.sign(state.rotErr);
+  // long-spiral release: turnAccumS is a leaky integrator of turn-PHRASE
+  // time. A parsed spiral turns in per-count bursts (~0.4 beats of theta
+  // motion per count), so it counts the whole held phrase — turning frames
+  // plus the settle windows that bridge the bursts — and decays with a
+  // spiralDecay-beat time constant once the phrase ends. A sustained
+  // multi-count spiral (45 deg/count turning walks) or a dense turn cluster
+  // (9-turn walls) accumulates past spiralAfter and ramps the effective hold
+  // from rotHold toward spiralHold — the camera trails the phrase instead of
+  // freezing for 6 counts and then panning 270 deg in one go. A lone pivot's
+  // phrase is only ~1 beat (0.4 turn + 0.6 settle) and decays before the
+  // next, so snap swivels keep the round-2 full freeze and read in the boots.
   if (turning) lastTurnMs = nowMs;
   const holding = turning || (lastTurnMs !== null &&
     (nowMs - lastTurnMs) / 1000 < VIEW3D.rotSettle * 60 / state.bpm);
-  const rotCap = VIEW3D.rotVmax * (holding ? VIEW3D.rotHold : 1);
+  if (holding) turnAccumS += dt;
+  else turnAccumS *= Math.exp(-dt * state.bpm / 60 / VIEW3D.spiralDecay);
+  let effHold = VIEW3D.rotHold;
+  if (holding && state.view3d) { // release is 3D-only; 2D keeps round-2 exactly
+    const turnBeats = turnAccumS * state.bpm / 60;
+    const k = Math.max(0, Math.min(1, (turnBeats - VIEW3D.spiralAfter) / VIEW3D.spiralRamp));
+    effHold += (VIEW3D.spiralHold - VIEW3D.rotHold) * k;
+  }
+  const rotCap = VIEW3D.rotVmax * (holding ? effHold : 1);
   // desired pan speed: proportional pull, clamped to the operator's cap; the
   // actual speed eases toward it so pans start and stop without a kick
   const rotGoal = Math.max(-rotCap, Math.min(rotCap, state.rotErr * VIEW3D.rotRate * 60));
@@ -1217,9 +1281,15 @@ function render() {
   // rate-limited drift: proportional pull, but never faster than azimVmax —
   // an exponential ease alone spikes hard on big target jumps and then
   // crawls; the cap makes it move like an operator panning at steady speed
-  const azStep = (azimGoal - state.azim) * VIEW3D.azimRate;
-  const azCap = VIEW3D.azimVmax * dt;
-  state.azim += Math.max(-azCap, Math.min(azCap, azStep));
+  // stillness deadband: a sub-degree azimuth error is parked, not chased —
+  // paired with the camDead leash deadband so held counts are truly frozen.
+  // 3D only: with the tilt off the azimuth must ease all the way home to 0
+  // or the classic top-down view would keep a permanent residual rotation
+  if (!state.view3d || Math.abs(azimGoal - state.azim) >= VIEW3D.azimDead) {
+    const azStep = (azimGoal - state.azim) * VIEW3D.azimRate;
+    const azCap = VIEW3D.azimVmax * dt;
+    state.azim += Math.max(-azCap, Math.min(azCap, azStep));
+  }
   curRot = viewRot + state.azim;
   let dRot = curRot - prevRot;
   dRot -= 360 * Math.round(dRot / 360); // a whole-revolution renumber is not motion
@@ -1227,8 +1297,36 @@ function render() {
                           Math.hypot(state.cam.x - camPX, state.cam.y - camPY) / dt, dt,
                           followRate, Math.abs(state.rotErr));
 
+  // impact thud: a stomp landing dips the whole frame 1-2px with a fast damped
+  // decay — the camera shakes, never the floor coordinates or the timing. A
+  // pure function of t (age since the impact keyframe, same lookup as the
+  // impact rings) so scrubs, sims and loop passes reproduce it exactly. Gated
+  // by the tilt like the boots: the 2D view stays untouched.
+  state.thud = 0;
+  if (VIEW3D.thudPx > 0 && curSinTilt > 0.03) {
+    const spb = 60 / state.bpm;
+    for (const f of ["L", "R"]) {
+      const arr = kf[f];
+      if (!arr || !arr.length) continue;
+      const cur = arr[findIdx(arr, t)];
+      if (cur && cur.impact) {
+        const ageS = (t - cur.t) * spb;
+        if (ageS >= 0 && ageS < 0.2) state.thud += Math.exp(-ageS / 0.055);
+      }
+    }
+    state.thud = Math.min(1.4, state.thud) * VIEW3D.thudPx *
+      (curSinTilt / Math.sin(VIEW3D.tilt * Math.PI / 180));
+  }
+  // loop-seam blink: after a teleport snap the world fades back in over
+  // ~250 ms so the seam reads as a cut, not a slam
+  if (seamFadeMs !== null) {
+    const k = (nowMs - seamFadeMs) / 250;
+    if (k >= 1) { seamFadeMs = null; elWorld.setAttribute("opacity", 1); }
+    else elWorld.setAttribute("opacity", 0.25 + 0.75 * Math.max(0, k));
+  }
+
   elWorld.setAttribute("transform",
-    "translate(" + VIEW_CX + "," + VIEW_CY + ") scale(1," + curTiltK + ") rotate(" + curRot + ") " +
+    "translate(" + VIEW_CX + "," + (VIEW_CY + state.thud) + ") scale(1," + curTiltK + ") rotate(" + curRot + ") " +
     "translate(" + (-state.cam.x * SCALE) + "," + (state.cam.y * SCALE) + ")");
 
   renderTrail("L", elTrailL, elDotL, t);
@@ -1655,6 +1753,9 @@ function seek(t) {
   velSm.x = 0; velSm.y = 0;
   prevTheta = null;
   lastTurnMs = null;
+  turnAccumS = 0;
+  seamFadeMs = null;
+  elWorld.setAttribute("opacity", 1);
   state.rotErr = 0;
   state.rotVel = 0;
   state.viewTheta = thetaAt(state.t);
