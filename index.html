@@ -826,6 +826,7 @@ function lerpAngle(a, b, s) {
 // hover just off the floor at the contact point
 function poseLift(k) {
   if (!k.lifted) return 0;
+  if (k.badge === "SWEEP") return 0.15; // sweeps skim: toe down, 3-5cm off the floor
   return k.pose === "air" ? 1 : 0.4;
 }
 
@@ -837,13 +838,13 @@ function poseLift(k) {
 //   snapLift: extra early lift overshoot (kicks snap out, then float).
 function backOut(r, c) { const u = r - 1; return 1 + (c + 1) * u * u * u + c * u * u; }
 const PROFILES = {
-  step:  {},                                                              // the classic: smoothstep + sine hop
-  drag:  { win: 1.25, arc: 0.18, pos: r => ease(Math.max(0, (r - 0.15) / 0.85)) }, // closes trail low along the floor, settle late
-  glide: { win: 1.3,  arc: 0.1,  pos: r => 0.5 - 0.5 * Math.cos(Math.PI * r) },    // skates/slides: steady leather-on-wood glide
+  step:  { arc: 0.3 },                                                    // grounded skim: 3-8cm clearance, no airtime — accents pop by contrast
+  drag:  { win: 2,    arc: 0.1,  pos: r => ease(Math.max(0, (r - 0.15) / 0.85)) }, // closes own their whole gap: one long floor-contact slide
+  glide: { win: 2,    arc: 0.1,  pos: r => 0.5 - 0.5 * Math.cos(Math.PI * r) },    // skates/drags/slides: one steady leather-on-wood glide over the whole gap
   rock:  { arc: 0.45, pos: r => backOut(ease(r), 1.2) },                  // lean past the spot, rebound onto it
   kick:  { win: 0.9,  snapLift: 0.3, pos: r => 1 - Math.pow(1 - r, 3) },  // snap out fast, float at the top
   hook:  { win: 0.85, arc: 0.5, pos: r => 1 - Math.pow(1 - r, 2) },       // quick tight tuck
-  sweep: { win: 1.35, arc: 1.15, pos: r => ease(ease(r)) },               // wide, floaty, extra-soft ends
+  sweep: { win: 2.2,  arc: 0.2,  pos: r => 0.5 - 0.5 * Math.cos(Math.PI * r) },    // low compass arc: toe-down, full-count, floor-level (bow added in footState)
   place: { win: 1.1,  arc: 0.6 },                                        // touches/points set down gently
   pivot: { arc: 0.08 },                                                  // swivel on the ball, no hop
   stomp: {}                                                              // handled by the impact special case
@@ -911,6 +912,13 @@ function footState(foot, t) {
   let winScale = P.win || 1;
   let arcAmp = P.arc === undefined ? 1 : P.arc;
   let bow = 0;
+  // resets out of a held toe/heel pose are one quick late motion: the
+  // attitude holds ~75% of its count, the return takes the last ~25%
+  // (even splits look robotic — tuning/motion-style-log.md)
+  if (prev.lifted && (prev.pose === "toe" || prev.pose === "heel") &&
+      !next.lifted && (next.prof === "step" || next.prof === "drag")) {
+    winScale *= 0.55;
+  }
   if (state.groove) {
     // hash on the landing's local beat so the groove repeats identically
     // every pass through the dance (and across the loop seam)
@@ -946,12 +954,19 @@ function footState(foot, t) {
   const sPos = P.pos ? P.pos(raw) : s;
   let x = prev.x + (next.x - prev.x) * sPos;
   let y = prev.y + (next.y - prev.y) * sPos;
-  if (bow) {
+  {
     const dxT = next.x - prev.x, dyT = next.y - prev.y;
     const d = Math.hypot(dxT, dyT);
-    if (d > 0.3) {
-      // perpendicular bow, zero at both endpoints so the landing is exact
-      const bs = bow * Math.min(1, d) * Math.sin(Math.PI * raw);
+    // path curvature, zero at both endpoints so the landing is exact:
+    // groove adds a slight wobble; a SWEEP mandates a wide perpendicular
+    // bow so the path traces a floor-level semicircle (a compass drawing
+    // an arc, not a straight lerp)
+    let bowAmp = d > 0.3 ? bow * Math.min(1, d) : 0;
+    if (next.badge === "SWEEP" && d > 0.05) {
+      bowAmp += (foot === "R" ? 1 : -1) * 0.35 * d;
+    }
+    if (bowAmp) {
+      const bs = bowAmp * Math.sin(Math.PI * raw);
       x += (-dyT / d) * bs;
       y += (dxT / d) * bs;
     }
@@ -979,16 +994,47 @@ function moveAttitude(prev, next, foot, s, raw) {
   return att;
 }
 
+// Facing interpolation. Three regimes (all still land exactly on the beat):
+// - chained turns (theta keyframes within CHAIN_GAP of each other) spiral
+//   continuously across the whole inter-keyframe span — a 3/4 turn reads as
+//   one smooth rotation, never discrete snapped eighths;
+// - a lone half/quarter pivot snaps through the middle ~40% of its count
+//   with an ease-out settle (linear over the full window looks mushy);
+// - small isolated turns keep the classic MOVE_WINDOW ease.
+const CHAIN_GAP = 2.05; // beats: turn keyframes this close read as one spiral
+
 function thetaAt(t) {
   const i = findIdx(thetaKF, t);
   const prev = thetaKF[i];
   const next = thetaKF[i + 1];
   if (!next) return prev.theta;
-  const win = Math.min(MOVE_WINDOW, (next.t - prev.t) * 0.9);
+  const gap = Math.max(next.t - prev.t, 1e-6);
+  const dTh = next.theta - prev.theta;
+  const chainPrev = i >= 1 && gap <= CHAIN_GAP;          // spiral continues from a recent turn
+  const chainNext = !!thetaKF[i + 2] && (thetaKF[i + 2].t - next.t) <= CHAIN_GAP;
+  if (chainPrev) {
+    // mid-chain: constant spin over the full span; at the chain's end,
+    // brake out with an ease-out so the spiral settles onto its beat
+    const r = Math.max(0, Math.min(1, (t - prev.t) / gap));
+    const s = chainNext ? r : 1 - (1 - r) * (1 - r);
+    return prev.theta + dTh * s;
+  }
+  const snap = Math.abs(dTh) >= 85 && !chainNext;
+  const win = Math.min(snap ? 1.0 : MOVE_WINDOW, gap * 0.9);
   const start = next.t - win;
   if (t < start) return prev.theta;
-  const s = ease(Math.min(1, (t - start) / win));
-  return prev.theta + (next.theta - prev.theta) * s;
+  const r = Math.min(1, (t - start) / win);
+  let s;
+  if (snap) {
+    // fast-middle pivot: hold, whip through the central ~40%, ease-out settle
+    const r2 = Math.max(0, Math.min(1, (r - 0.3) / 0.45));
+    s = 1 - Math.pow(1 - r2, 2.2);
+  } else if (chainNext) {
+    s = ease(r) * ease(r); // wind into the coming spiral, ease-in biased
+  } else {
+    s = ease(r);
+  }
+  return prev.theta + dTh * s;
 }
 
 function weightAt(t) {
@@ -1080,7 +1126,7 @@ const elWallLabel = document.getElementById("wall-label");
 const VIEW_CX = 260, VIEW_CY = 215;
 
 // per-frame view pose shared by render helpers
-let curRot = 0, curTiltK = 1, curSinTilt = 0;
+let curRot = 0, curTiltK = 1, curSinTilt = 0, groovePulsePx = 0;
 let velSm = { x: 0, y: 0 }, prevMid = null, lastFrameMs = null, prevTheta = null,
     lastTurnMs = null;
 
@@ -1231,6 +1277,18 @@ function render() {
     "translate(" + VIEW_CX + "," + VIEW_CY + ") scale(1," + curTiltK + ") rotate(" + curRot + ") " +
     "translate(" + (-state.cam.x * SCALE) + "," + (state.cam.y * SCALE) + ")");
 
+  // beat-locked groove pulse: the stance dips ~2px down-screen ON each count
+  // and rises between them — the knee pulse that makes it read as dancing.
+  // Purely vertical and cosmetic (landings and floor coordinates untouched),
+  // gated behind the Groove toggle and the 3D tilt like all boot work.
+  if (state.groove) {
+    const phase = ((t % 1) + 1) % 1;
+    const gate = Math.min(1, curSinTilt / 0.35);
+    groovePulsePx = 2 * (0.5 + 0.5 * Math.cos(2 * Math.PI * phase)) * gate;
+  } else {
+    groovePulsePx = 0;
+  }
+
   renderTrail("L", elTrailL, elDotL, t);
   renderTrail("R", elTrailR, elDotR, t);
   renderImpact("L", elImpactL, t);
@@ -1246,8 +1304,17 @@ function render() {
   if (w !== glowAnim.foot || t < glowAnim.tAt) { glowAnim.foot = w; glowAnim.tAt = t; }
   const wf = w === "L" ? L : R;
   const settle = ease(Math.max(0, Math.min(1, (t - glowAnim.tAt) / 0.22)));
-  elGlow.setAttribute("cx", wf.x * SCALE);
-  elGlow.setAttribute("cy", -wf.y * SCALE);
+  // the glow dips with the groove pulse: convert the screen-space dip into
+  // the world layer's pre-transform frame (undo the tilt squish + rotation)
+  let gcx = wf.x * SCALE, gcy = -wf.y * SCALE;
+  if (groovePulsePx) {
+    const dip = groovePulsePx / Math.max(0.25, curTiltK);
+    const rr = curRot * Math.PI / 180;
+    gcx += dip * Math.sin(rr);
+    gcy += dip * Math.cos(rr);
+  }
+  elGlow.setAttribute("cx", gcx);
+  elGlow.setAttribute("cy", gcy);
   elGlow.setAttribute("opacity", 0.3 + 0.7 * settle);
 
   const dialRot = curRot;
@@ -1273,7 +1340,8 @@ function render() {
 // and lift + boot shafts rise vertically on screen — which is what sells
 // the 3D once the camera is off to the side.
 function placeFoot(f, shadow, contact, boot, s) {
-  const [sx, sy] = worldToScreen(s.x, s.y);
+  let [sx, sy] = worldToScreen(s.x, s.y);
+  sy += groovePulsePx; // beat-locked dip: whole stance sinks on the count
   const sa = s.a + curRot;
   const rad = sa * Math.PI / 180;
   const liftUp = s.lift * VIEW3D.liftPx * curSinTilt;
