@@ -78,7 +78,11 @@
     flex-shrink: 0;
   }
   .now .what .section { color: var(--muted); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; }
-  .now .what .step { font-size: 1.05rem; font-weight: 500; margin-top: 2px; }
+  .now .what .step { font-size: 1.05rem; font-weight: 500; margin-top: 2px; min-height: 1.3em; cursor: pointer; }
+  .now .what .step.warn { color: var(--warn); }
+  /* next-up boundary prompt: dimmed, and always reserving its line so the
+     panel never changes height when the 2-count window opens */
+  .now .what .next { color: var(--muted); font-size: 0.74rem; margin-top: 1px; min-height: 1.1em; }
 
   .progress {
     display: flex;
@@ -200,6 +204,29 @@
     flex-shrink: 0;
     font-variant-numeric: tabular-nums;
   }
+  /* Progressive cue stages (CSS-collapse only — the DOM is built once per
+     dance): teach = full text, label = counts + figure label, counts = counts
+     only. Full text stays one hover (title attr) or click (.expanded) away,
+     and section headers, the counts column, and the active highlight never
+     disappear at any stage. */
+  .line .lbl { display: none; color: var(--muted); }
+  #sheet-lines.stage-label .line .txt { display: none; }
+  #sheet-lines.stage-label .line .lbl { display: inline; }
+  #sheet-lines.stage-counts .line .txt,
+  #sheet-lines.stage-counts .line .lbl { display: none; }
+  #sheet-lines.stage-counts .line { opacity: 0.75; }
+  #sheet-lines.stage-counts .line.active { opacity: 1; }
+  /* per-section verbosity boosts (loop pin, click bump, rewind) override the
+     container stage for just that section's lines */
+  #sheet-lines .line.sec-teach .txt { display: inline; }
+  #sheet-lines .line.sec-teach .lbl { display: none; }
+  #sheet-lines .line.sec-teach { opacity: 1; }
+  #sheet-lines.stage-counts .line.sec-label .lbl { display: inline; }
+  #sheet-lines.stage-counts .line.sec-label { opacity: 1; }
+  /* clicking a collapsed line reveals its full text in place */
+  #sheet-lines .line.expanded .txt { display: inline; }
+  #sheet-lines .line.expanded .lbl { display: none; }
+  #sheet-lines .line.expanded { opacity: 1; }
   .legend {
     display: flex;
     flex-wrap: wrap;
@@ -462,7 +489,8 @@
         <div class="count" id="now-count">1</div>
         <div class="what">
           <div class="section" id="now-section"></div>
-          <div class="step" id="now-step">Press play to start</div>
+          <div class="step" id="now-step" title="Click for full detail on this section">Press play to start</div>
+          <div class="next" id="now-next"></div>
         </div>
       </div>
       <div class="controls">
@@ -470,6 +498,12 @@
         <button class="icon" id="btn-restart" title="Back to count 1">&#8634;</button>
         <button class="icon" id="btn-prev" title="Previous step (&#8592;)">&#9665;</button>
         <button class="icon" id="btn-next" title="Next step (&#8594;)">&#9655;</button>
+        <div class="seg" id="cue-seg" title="Cue detail — Auto teaches on wall 1, drops to figure labels on walls 2-3, counts only after that">
+          <button data-cue="auto" class="toggled">Auto</button>
+          <button data-cue="teach">Teach</button>
+          <button data-cue="label">Label</button>
+          <button data-cue="counts">Counts</button>
+        </div>
         <div class="seg">
           <button id="btn-loop-sec" title="Repeat the current section">Loop</button>
           <button id="btn-follow" title="Rotate the floor so forward is always up">Follow</button>
@@ -1735,19 +1769,156 @@ function renderTurnArc(t, midX, midY) {
 const elNowCount = document.getElementById("now-count");
 const elNowSection = document.getElementById("now-section");
 const elNowStep = document.getElementById("now-step");
+const elNowNext = document.getElementById("now-next");
+
+// ---------------------------------------------------------------------------
+// Progressive cues — mirror how instructors compress over a class: wall 1
+// gets the full description ("teach"), walls 2-3 drop to terse figure labels
+// ("label"), wall 4+ keeps only the count plus a next-up prompt at each
+// section seam ("counts"). The count and the section name never compress —
+// they are the rhythm anchor and the "where am I" skeleton — and anything
+// irregular (restarts/tags/bridges) always cues at full verbosity one
+// section early, at every stage.
+// ---------------------------------------------------------------------------
+
+const CUE_STAGES = ["teach", "label", "counts"];
+const cue = {
+  mode: "auto",     // "auto" follows the wall schedule; manual picks freeze it
+  bumpSec: null,    // section index temporarily raised one stage (click/rewind)
+  teachPins: new Set(), // section indices pinned to Teach (looping = learning)
+  pinsVer: 0        // cache-buster for the sheet stage classes
+};
+
+function cueAutoStage(wall) { return wall <= 0 ? 0 : wall <= 2 ? 1 : 2; }
+
+function cueBaseStage(t) {
+  const wall = Math.floor(t / WALL_BEATS);
+  return cue.mode === "auto" ? cueAutoStage(wall)
+                             : Math.max(0, CUE_STAGES.indexOf(cue.mode));
+}
+
+// Effective stage for one section: base stage, lowered (more verbose) by the
+// learning signals — loop pin forces Teach, a click/rewind bump raises one.
+function cueStageFor(t, secIdx) {
+  let s = cueBaseStage(t);
+  if (cue.bumpSec === secIdx) s = Math.max(0, s - 1);
+  if (cue.teachPins.has(secIdx)) s = 0;
+  return s;
+}
+
+function sectionIdxAt(localBeat) {
+  let idx = 0;
+  for (let i = 0; i < dance.sections.length; i++) {
+    if (dance.sections[i].startBeat <= localBeat + 1e-6) idx = i; else break;
+  }
+  return idx;
+}
+
+// Figure labels are owned by the figures.js detector when it is present
+// (section span -> figure label, e.g. "Vine R"); this shim degrades to the
+// section name so cues work without it. Never grow a move-name dictionary
+// here or in the parser — figures.js is the single label owner.
+function labelForSection(secIdx) {
+  const sec = dance.sections[secIdx];
+  if (!sec) return "";
+  try {
+    const F = window.FIGURES;
+    if (F && typeof F.labelForSection === "function") {
+      const l = F.labelForSection(dance, secIdx);
+      if (l) return l;
+    }
+    if (typeof window.figureLabelForSection === "function") {
+      const l = window.figureLabelForSection(dance, secIdx);
+      if (l) return l;
+    }
+    if (sec.figureLabel) return sec.figureLabel;
+    if (sec.figure && sec.figure.label) return sec.figure.label;
+  } catch (e) { /* label API mismatch: fall back to the section name */ }
+  return sec.name;
+}
+
+function labelForLine(line) {
+  try {
+    const F = window.FIGURES;
+    if (F && typeof F.labelForLine === "function") {
+      const l = F.labelForLine(dance, line);
+      if (l) return l;
+    }
+    if (line.figureLabel) return line.figureLabel;
+  } catch (e) { /* fall through */ }
+  return labelForSection(line.sec);
+}
+
+// Irregularity cues: the parser only surfaces restarts/tags/bridges as
+// warning strings, so mine those for a wall number ("Restart: Wall 4 after
+// 32 counts") and cue the full text from the start of the section leading
+// into that point — instructors never let a restart go uncalled.
+let warnCues = [];
+function buildWarnCues() {
+  warnCues = [];
+  for (const w of (dance.warnings || [])) {
+    if (!/\b(restart|tag|bridge)s?\b/i.test(w)) continue;
+    const q = w.match(/"([^"]*)"\s*$/);
+    const txt = q ? q[1] : w;
+    const wm = txt.match(/wall\s*(\d+)/i);
+    if (!wm) continue;
+    const wall = +wm[1];
+    if (wall < 1 || wall > dance.walls) continue;
+    const cm = txt.match(/after\s*(?:count\s*)?(\d+)/i);
+    const beat = Math.max(1, Math.min(cm ? +cm[1] : WALL_BEATS, WALL_BEATS));
+    const prevSec = sectionAt(beat - 0.001);
+    warnCues.push({
+      from: (wall - 1) * WALL_BEATS + prevSec.startBeat,
+      to: (wall - 1) * WALL_BEATS + beat,
+      txt: "⚠ " + txt
+    });
+  }
+}
+
+function warningCueAt(t) {
+  for (const c of warnCues) if (t >= c.from - 1e-6 && t < c.to - 1e-6) return c.txt;
+  return null;
+}
 
 function renderNow(t) {
   if (state.introCountdown != null) {
     elNowCount.textContent = "♪";
     elNowSection.textContent = "Intro";
     elNowStep.textContent = "Dance starts in " + state.introCountdown + " counts";
+    elNowStep.classList.remove("warn");
+    elNowNext.textContent = "";
     return;
   }
   const ev = eventAt(t);
   const local = ((t % WALL_BEATS) + WALL_BEATS) % WALL_BEATS;
+  const secIdx = sectionIdxAt(local);
+  const sec = dance.sections[secIdx];
+  // a click/rewind bump lives only until the playhead leaves that section
+  if (cue.bumpSec != null && cue.bumpSec !== secIdx) cue.bumpSec = null;
+  const stage = cueStageFor(t, secIdx);
+
+  // invariants: the count and the section name render at every stage
   elNowCount.textContent = ev.c;
-  elNowSection.textContent = sectionAt(local).name;
-  elNowStep.textContent = ev.txt;
+  elNowSection.textContent = sec.name;
+
+  // next-up boundary prompt: last 2 counts of a section, at every stage
+  const inWindow = local >= sec.startBeat + sec.beats - 2 - 1e-6;
+  let nextLabel = "";
+  if (inWindow && dance.sections.length) {
+    const nsec = (secIdx + 1) % dance.sections.length;
+    nextLabel = "next: " + labelForSection(nsec);
+  }
+
+  const warnCue = warningCueAt(t);
+  let stepTxt;
+  if (warnCue) stepTxt = warnCue;                    // full verbosity, always
+  else if (stage === 0) stepTxt = ev.txt;            // teach: full description
+  else if (stage === 1) stepTxt = labelForSection(secIdx); // label: terse handle
+  else stepTxt = inWindow ? nextLabel : "";          // counts: seam prompts only
+  elNowStep.textContent = stepTxt;
+  elNowStep.classList.toggle("warn", !!warnCue);
+  // the dimmed next line carries the prompt unless it already IS the step line
+  elNowNext.textContent = (inWindow && stepTxt !== nextLabel) ? nextLabel : "";
 }
 
 // ---------------------------------------------------------------------------
@@ -1809,14 +1980,45 @@ function buildSheet() {
     }
     const div = document.createElement("div");
     div.className = "line";
-    div.innerHTML = '<span class="counts">' + line.counts + '</span><span>' + line.text + '</span>';
-    div.addEventListener("click", () => seek(Math.floor(state.t / WALL_BEATS) * WALL_BEATS + line.b0));
+    const lbl = labelForLine(line);
+    div.innerHTML = '<span class="counts">' + line.counts + '</span>' +
+      '<span class="txt"></span><span class="lbl"></span>';
+    div.querySelector(".txt").textContent = line.text;
+    div.querySelector(".lbl").textContent = lbl;
+    // full text stays one hover away at every stage
+    div.title = line.counts + "  " + line.text;
+    div.addEventListener("click", () => {
+      // reveal the full text in place when the stage has collapsed it
+      div.classList.toggle("expanded");
+      seek(Math.floor(state.t / WALL_BEATS) * WALL_BEATS + line.b0);
+    });
     elSheetLines.appendChild(div);
     lineEls.push({ el: div, line });
+  }
+  sheetStageKey = null; // force a stage-class refresh for the new DOM
+}
+
+// Per-stage sheet density is pure CSS: a stage class on the (already built)
+// lines container, plus per-section boost classes for pinned/bumped
+// sections. Cheap key check so the render loop never touches the DOM unless
+// the stage inputs actually changed — no rebuild mid-song, ever.
+let sheetStageKey = null;
+function applySheetStage(t) {
+  const base = cueBaseStage(t);
+  const key = base + "|" + cue.bumpSec + "|" + cue.pinsVer;
+  if (key === sheetStageKey) return;
+  sheetStageKey = key;
+  elSheetLines.classList.remove("stage-teach", "stage-label", "stage-counts");
+  elSheetLines.classList.add("stage-" + CUE_STAGES[base]);
+  for (const { el, line } of lineEls) {
+    const s = cueStageFor(t, line.sec);
+    el.classList.toggle("sec-teach", s === 0 && base !== 0);
+    el.classList.toggle("sec-label", s === 1 && base === 2);
   }
 }
 
 function renderSheet(t) {
+  applySheetStage(t);
   const beat = ((t % WALL_BEATS) + WALL_BEATS) % WALL_BEATS;
   for (const { el, line } of lineEls) {
     el.classList.toggle("active", beat >= line.b0 && beat < line.b1 + 1);
@@ -1845,12 +2047,18 @@ function loadDance(parsed, url) {
   TOTAL_BEATS = WALL_BEATS * dance.walls;
   buildTimeline();
   buildProgress();
+  cue.bumpSec = null;
+  cue.teachPins.clear();
+  cue.pinsVer++;
+  loadCuePrefs();
+  buildWarnCues();
   buildSheet();
   lastClock = "12:00";
   state.loopSection = false;
   document.getElementById("btn-loop-sec").classList.remove("toggled");
   loadMusicPrefs();
   seek(0);
+  cue.bumpSec = null; // the load-time seek(0) is not a rewind gesture
   setPlaying(false);
   autoSetupMusic();
 }
@@ -1860,10 +2068,20 @@ function loadDance(parsed, url) {
 // ---------------------------------------------------------------------------
 
 function seek(t) {
+  const prevT = state.t;
   state.t = ((t % TOTAL_BEATS) + TOTAL_BEATS) % TOTAL_BEATS;
   state.lastBeatInt = Math.floor(state.t);
   const local = ((state.t % WALL_BEATS) + WALL_BEATS) % WALL_BEATS;
   const sec = sectionAt(local);
+  // Rewinding past more than a section is a learning signal: raise the
+  // target section's verbosity one stage. The 0.5-beat margin keeps a
+  // section loop's own wrap (exactly one section back, plus frame overshoot)
+  // from triggering, and the TOTAL_BEATS guard skips the end-of-dance wrap.
+  const back = prevT - state.t;
+  if (back > sec.beats + 0.5 && back < TOTAL_BEATS - 1) {
+    cue.bumpSec = sectionIdxAt(local);
+    cue.pinsVer++;
+  }
   state.loopFrom = Math.floor(state.t / WALL_BEATS) * WALL_BEATS + sec.startBeat;
   state.loopLen = sec.beats;
   reanchor();
@@ -2021,7 +2239,50 @@ bindToggle("btn-loop-sec", "loopSection", () => {
   const sec = sectionAt(local);
   state.loopFrom = Math.floor(state.t / WALL_BEATS) * WALL_BEATS + sec.startBeat;
   state.loopLen = sec.beats;
+  // looping a section means "I'm still learning this part": pin it to Teach
+  // for the rest of the session
+  if (state.loopSection) {
+    cue.teachPins.add(sectionIdxAt(local));
+    cue.pinsVer++;
+  }
 });
+
+// "Wait, what was that?" — clicking the step line raises this section's
+// verbosity one stage until the playhead leaves the section.
+elNowStep.addEventListener("click", () => {
+  const local = ((state.t % WALL_BEATS) + WALL_BEATS) % WALL_BEATS;
+  cue.bumpSec = sectionIdxAt(local);
+  cue.pinsVer++;
+});
+
+// Cue verbosity override: Auto follows the wall schedule; any manual pick
+// freezes it until Auto is re-selected. Persisted per dance like music prefs.
+const elCueSeg = document.getElementById("cue-seg");
+function cueKey() { return "cues:" + (dance.url || dance.title); }
+
+function setCueMode(mode, save) {
+  cue.mode = CUE_STAGES.includes(mode) || mode === "auto" ? mode : "auto";
+  for (const b of elCueSeg.querySelectorAll("button"))
+    b.classList.toggle("toggled", b.dataset.cue === cue.mode);
+  sheetStageKey = null; // the rAF loop re-renders every frame; just invalidate
+  if (save) {
+    try {
+      localStorage.setItem(cueKey(), JSON.stringify({ mode: cue.mode }));
+    } catch (e) { /* private mode */ }
+  }
+}
+
+function loadCuePrefs() {
+  let mode = "auto";
+  try {
+    const saved = JSON.parse(localStorage.getItem(cueKey()));
+    if (saved && saved.mode) mode = saved.mode;
+  } catch (e) { /* ignore */ }
+  setCueMode(mode, false);
+}
+
+for (const b of elCueSeg.querySelectorAll("button"))
+  b.addEventListener("click", () => setCueMode(b.dataset.cue, true));
 bindToggle("btn-follow", "follow");
 bindToggle("btn-3d", "view3d");
 bindToggle("btn-groove", "groove");
