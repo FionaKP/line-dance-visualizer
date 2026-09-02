@@ -1,0 +1,67 @@
+# Deploy the visualizer as a static site to GitHub Pages.
+#
+# Only the browser-side files ship: the app detects the missing server
+# (api/ping answers {"mode":"static"}) and runs in offline mode — bundled
+# library, pasted stepsheets, playback, tap-tempo music sync. server.py /
+# sources.py never enter the artifact. See PUBLISH.md.
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Build the bundled dance library manifest
+        run: node tools/build-library.js
+
+      - name: Assemble the static file set
+        run: |
+          mkdir -p _site/api
+          cp index.html parser.js tempo.js boot3d.js library.json _site/
+          # optional modules: ship them when present, skip quietly when not
+          for f in figures.js; do
+            if [ -f "$f" ]; then cp "$f" _site/; fi
+          done
+          # static hosts answer the app's feature probe with "static"
+          printf '{"ok":true,"mode":"static"}' > _site/api/ping
+
+      - name: Verify no server code in the artifact
+        run: |
+          if find _site -name '*.py' | grep -q .; then
+            echo "Python files leaked into the Pages artifact:" >&2
+            find _site -name '*.py' >&2
+            exit 1
+          fi
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
