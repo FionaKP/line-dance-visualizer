@@ -1862,21 +1862,26 @@ function buildWarnCues() {
     const txt = q ? q[1] : w;
     const wm = txt.match(/wall\s*(\d+)/i);
     if (!wm) continue;
-    const wall = +wm[1];
-    if (wall < 1 || wall > dance.walls) continue;
+    // when the stated wall is outside the parsed wall count (the parser often
+    // downgrades unturned sheets to 1 wall), cue the window on EVERY wall —
+    // better to over-call a restart than to let it go uncalled
+    let wall = +wm[1];
+    if (wall < 1 || wall > dance.walls) wall = null;
     const cm = txt.match(/after\s*(?:count\s*)?(\d+)/i);
     const beat = Math.max(1, Math.min(cm ? +cm[1] : WALL_BEATS, WALL_BEATS));
     const prevSec = sectionAt(beat - 0.001);
-    warnCues.push({
-      from: (wall - 1) * WALL_BEATS + prevSec.startBeat,
-      to: (wall - 1) * WALL_BEATS + beat,
-      txt: "⚠ " + txt
-    });
+    warnCues.push({ wall, fromLocal: prevSec.startBeat, toLocal: beat, txt: "⚠ " + txt });
   }
 }
 
 function warningCueAt(t) {
-  for (const c of warnCues) if (t >= c.from - 1e-6 && t < c.to - 1e-6) return c.txt;
+  if (!warnCues.length) return null;
+  const local = ((t % WALL_BEATS) + WALL_BEATS) % WALL_BEATS;
+  const wall = Math.floor(t / WALL_BEATS) + 1;
+  for (const c of warnCues) {
+    if (c.wall != null && c.wall !== wall) continue;
+    if (local >= c.fromLocal - 1e-6 && local < c.toLocal - 1e-6) return c.txt;
+  }
   return null;
 }
 
