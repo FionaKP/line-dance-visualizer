@@ -908,18 +908,21 @@ function kfAttitude(k, foot) {
   // weighted flat landings, shaped by where they land in the dancer's frame
   // (dxo/dyo carried on step keyframes). Attitude only — position untouched.
   if (!k.lifted && !k.impact && k.pose === "flat" && k.dxo !== undefined && k.t !== undefined) {
+    // dxo is stored in the dancer's frame with the parser's left-foot mirror
+    // applied; un-mirror so +dxn = the foot's own natural side for both feet
+    const dxn = k.dxo * sgn;
     // universal &-count contact (catalog rule 1): any &-timed close/together/
     // ball step lands on the ball, heel raised 40-50 — chasse and shuffle
     // togethers, kick-ball-change dabs, coaster &s all get the lock-style tuck
     const fr = ((k.t % 1) + 1) % 1;
     if (fr > 0.2 && fr < 0.8 &&
-        k.dxo > 0.3 && k.dxo < 1.2 && Math.abs(k.dyo || 0) < 0.6)
+        dxn > 0.3 && dxn < 1.2 && Math.abs(k.dyo || 0) < 0.6)
       return { pitch: 44, roll: 0, yawOff: 0, bend: 0.45, anchor: "toe" };
     // cross landings turn out over the standing foot: ~30 deg for front
     // crosses (jazz box, twinkle, scissor, samba cross — shake-that/amame
     // footage), slighter for behind-crosses (vines are a loose stagger,
     // toes just slightly out). figures meta may modulate via k.turnout.
-    if (k.dxo < -0.15) {
+    if (dxn < -0.15) {
       const out = k.turnout !== undefined ? k.turnout
                 : (k.dyo || 0) >= 0 ? 30 : 15;
       return { pitch: 0, roll: 0, yawOff: out * sgn, bend: 1, anchor: null };
