@@ -41,3 +41,47 @@ shot. Numeric spot-checks via footState()/kfAttitude() in the console.
 2D check: 3D toggled off @ the same kick — pads/heels/badge unchanged (all
 new work sits in att / the boot block, which 2D never consumes).
 node tests/run.js: 172/172 green (no parser/tempo changes).
+
+# Boots style log — round 2, pass 1
+
+Six footage-driven corrections from the round-2 analysis (american-kids,
+flex, shake-that, spicy-margarita, figure-catalog-notes). All still 3D-only
+attitude work in kfAttitude/poseLift/PROFILES + the placeFoot boot block.
+
+- Points/taps steepened 55 -> 68 (footage 70-80; target 65-70), with
+  POINT/TOUCH/TOE badges routed explicitly through the toe-anchored branch;
+  back touches settle shallower at 52 (charleston catalog). Verified:
+  twinkle-toes points measure 68 settled; 10:35 @49.15 holds 68, @49.4 the
+  blend into the & close is still 47 toe-anchored (steep in scrubbed stills).
+- Heel touches softened -30 -> -22 toe-up (american-kids: small 20-25 lift,
+  not a showy 45). tush-push heel @4.1 shows the modest sole sliver.
+- Kicks are LOW knee-flicks: poseLift 0.35 for KICK (was 1.0 via pose air),
+  kick profile arc 0.5 + snapLift 0.15 (was 1.0/0.3); pitch -32 kept.
+  picnic-polka kicks: held lift 0.35, travel apex 0.64 — under shin height
+  (was apex ~1.3, above the boot shaft).
+- Universal &-count contact (catalog rule 1): &-timed closes/togethers/ball
+  steps (fractional-beat keyframe, un-mirrored dxo 0.3-1.2, |dyo| < 0.6)
+  land pitch 44 toe-anchored — chasse/shuffle togethers, KBC dabs, coaster
+  &s. tush-push cha-triple &s and the cha-cha-cha Lindy chasse &s all read
+  44 ball contact; whole-count closes stay flat.
+- Cross turnout: weighted flat cross landings (un-mirrored dxo < -0.15) yaw
+  out 30 for front crosses, 15 behind (vines stay a loose stagger);
+  attitude only, position untouched; figures meta can modulate via
+  k.turnout. amame front crosses ±30 / behind ±15 with correct mirroring;
+  black-velvet jazz-box cross no longer lands parallel.
+  GOTCHA fixed en route: kf.dxo stores the parser's MIRRORED dx, so a
+  left-foot close is dxo -0.85 and a left cross is +0.4 — all landing-shape
+  detection must un-mirror by foot sign first (round-1's beside check only
+  survived because it used abs()).
+- heelPop seeds fully developed on any seek (|dt| > 0.34 beat rewinds
+  since by 1 beat) so scrubbed stills show the free-heel texture; the pop
+  also layers onto yaw-only attitudes so a crossed free boot still peels.
+  Cold seek to tush-push 9.6: free R boot popped in a single-shot still.
+
+Verification: screenshots via a background browser tab on the live app
+(viewBox pinned to '150 110 220 200' for close-ups), state driven manually
+with setSynced(false)/seek/render x2, numerics via footState().att. NOTE:
+loadDance's async music setup can seek(0) shortly after a sheet loads —
+wait ~0.5s (or re-seek) before composing a still. __sim smoke: 32 beats of
+canadian-stomp + sambas-and-sailors, no exceptions.
+node tests/run.js: 172/172 green.
