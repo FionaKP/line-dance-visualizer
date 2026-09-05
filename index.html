@@ -827,13 +827,19 @@ function buildTimeline(seed) {
       if (turn) {
         theta += turn;
         thetaKF.push({ t, theta });
+        // heel grind: "weight on R heel making a ½ turn" — tag the grinding
+        // foot's swivel keyframe so footState rotates it about its HEEL
+        // anchor (attitude + drift only; the landing coordinates are exact)
+        const grindF = !ev.foot && ev.weight && Math.abs(turn) >= 85 &&
+                       /\bheel\b/i.test(ev.txt || "") ? ev.weight : null;
         // feet swivel with the body: pivot any foot that is not stepping now
         for (const f of ["L", "R"]) {
           if (f === ev.foot) continue;
           const curF = feet[f];
           const last = kf[f][kf[f].length - 1];
           feet[f] = { ...curF, a: theta };
-          kf[f].push({ t, x: curF.x, y: curF.y, a: theta, lifted: last.lifted, pose: last.pose, badge: null, prof: "pivot" });
+          kf[f].push({ t, x: curF.x, y: curF.y, a: theta, lifted: last.lifted, pose: last.pose, badge: null, prof: "pivot",
+                       grind: f === grindF || undefined });
         }
       }
       if (ev.foot) {
@@ -1075,6 +1081,21 @@ function footState(foot, t) {
       y += (dxT / d) * bs;
     }
   }
+  // heel grind: the grinding boot rotates about its planted HEEL corner
+  // through the sweep (mirror of the toe-anchor mechanics) — the boot center
+  // drifts out along the heel-anchored arc and re-places under the body as
+  // it rotates (spicy-margarita: never a turn on a dime). The envelope is
+  // zero at both ends so the landing still evaluates exactly to its keyframe.
+  if (next.grind) {
+    const hb = 0.35; // floor units from boot center back to the heel corner
+    const a0 = prev.a * Math.PI / 180;
+    const ath = lerpAngle(prev.a, next.a, s) * Math.PI / 180;
+    const env = Math.sin(Math.PI * raw);
+    const gx = prev.x - hb * Math.sin(a0) + hb * Math.sin(ath);
+    const gy = prev.y - hb * Math.cos(a0) + hb * Math.cos(ath);
+    x += (gx - x) * env;
+    y += (gy - y) * env;
+  }
   let lift = Math.max(Math.sin(Math.PI * s) * arcAmp, prevLift + (nextLift - prevLift) * s);
   if (P.snapLift) lift += P.snapLift * Math.sin(Math.PI * Math.pow(raw, 0.6));
   return {
@@ -1090,6 +1111,13 @@ function footState(foot, t) {
 // blended attitude for a foot mid-window, plus per-move flourishes that only
 // exist while the foot travels (zero at both ends, so landings never snap)
 function moveAttitude(prev, next, foot, s, raw) {
+  // heel grind: rocked back on the planted heel through the whole sweep, the
+  // trailing toe skimming a low arc; dead flat again exactly at the landing
+  if (next.grind) {
+    const env = Math.sin(Math.PI * raw);
+    return { pitch: -20 * env, roll: 0, yawOff: 0, bend: 1 - 0.35 * env,
+             anchor: "heel", anchorW: env };
+  }
   let att = blendAttitude(kfAttitude(prev, foot), kfAttitude(next, foot), s);
   if (att && next.badge === "SWEEP") {
     // the sweeping toe fans outward through the arc and settles back
