@@ -63,3 +63,59 @@ count 33 drag: motion fills 0.9 beats of its 1-count slide window.
 keyframe evaluates exactly to its landing value at its beat (worst position
 error 0, worst theta error 2e-7 deg, groove ON); 2D view unchanged (dip 0,
 glyph language untouched); node tests/run.js 172/172 green.
+
+## Round 2 (style2-motion-r2)
+
+**8. Hip figures render as motion.** New body styling layer (STYLE +
+buildStyling): footless "bump hips" events become lateral paired-stance
+pushes (0.13 units toward the named side, sine rise-and-recoil per counted
+bump so doubles read as two distinct pushes); fore-aft rocks (|dy| >= 0.5)
+and their weight-only recovers become fore/aft pulses (0.1 units, one push
+per count), skipped when an explicit bump shares the count (tush-push
+13-16). Pulses are wall-local, rotated by the current facing, applied in
+render() AFTER the camera consumed the raw foot states, and tilt-gated —
+keyframes, landings, camera and 2D stay byte-identical (sim over the
+tush-push bump block: maxCamSpeed 0). Syncopated runs compress dur (clamped
+0.4-1 beat) not reach.
+
+**9. 3/4-time styling.** detectWaltz: >=60% of counted lines span exactly 3
+beats AND wallBeats % 3 == 0 (twinkle-toes-waltz is the corpus's only hit).
+Waltz sheets swap the per-count groove dip for one smooth rise-and-fall per
+3-count bar (3px, down into count 1) plus releve on counts 2-3: settled flat
+boots ease both heels up (pitch 15, toe-anchored, eased in over count 2 and
+out at the bar end). Behind the Groove toggle; verified per-bar dip period
+3.3/0/3.3 px across a bar and boot screen extent 48.9 -> 51.9 on counts 2-3.
+
+**10. Heel grind.** buildTimeline tags the grinding foot's swivel keyframe
+(turn event with weight + "heel" in its text, |turn| >= 85 — ten-thirty-five
+S1 7-8). footState rotates that boot about its HEEL corner: attitude pitch
+-20 heel-anchored through the sweep (trailing toe up, skimming the arc) and
+the boot center drifts along the heel-anchored arc (hb 0.35u) with a
+sin(pi*raw) envelope — mid-turn the rotation is visibly heel-anchored, the
+landing still evaluates exactly to its keyframe (verified: mid a=92 center
+drifts to the exact heel-arc point, t=6 lands byte-exact).
+
+**11. Pivot open-stance moment.** Lone fast pivots (|dTh| >= 135, unchained)
+widen the drawn stance about its own midpoint by up to 28% with a sin
+envelope over the same window thetaAt's fast-middle profile uses — the
+mid-whip straddle (tush-push half pivot: 1.24u endpoints -> 1.59u mid).
+Midpoint unchanged so the camera path is identical; grind turns are excluded.
+
+**12. Hold texture.** Pure holds (footless, non-bump events) freeze the
+groove dip: it eases to 0 over 0.4 beats from the hold's count and stays
+frozen through the span (canadian-stomp holds dead still until the next
+move's takeoff). Funk/pop sheets (title/music/section sniff) instead keep a
+subtle weight-glow breathe (1.2px bob, 0.08 opacity wobble at 2/beat) — the
+boots stay frozen, the body doesn't. Country sheets freeze dead. Waltz bars
+keep their body wave through holds.
+
+**13. Amplitude escalation.** stylingIntensity/kfIntensity: cosmetic
+amplitudes scale 1 + 0.1*min(3, wallRepeat) — groove dip 2.0 -> 2.6px, hip
+pulses, kick/scuff pitch -32 -> -41.6 by wall 4 — with identical keyframe
+coordinates and timing (catalog rule 6: level scales amplitude, never
+placement or timing). Groove-off returns 1 everywhere.
+
+**Invariants re-checked:** landings byte-exact through grind/straddle
+envelopes (both zero at window ends); camera stats over the bump block all
+zero; 2D view untouched (every new offset is tilt-gated); node tests/run.js
+172/172 green.
