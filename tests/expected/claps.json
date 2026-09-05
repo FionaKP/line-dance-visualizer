@@ -1,0 +1,14 @@
+{
+  "meta": { "ok": true, "wallBeats": 8, "walls": 1, "warnings": 0 },
+  "events": [
+    { "beat": 0, "foot": "R", "lifted": true, "dyMin": 0.5 },
+    { "beat": 1, "clap": true },
+    { "beat": 2, "foot": "L", "dyMin": 0.5 },
+    { "beat": 3, "clap": null },
+    { "beat": 4, "foot": "R", "lifted": true },
+    { "beat": 4, "clap": true },
+    { "beat": 5, "foot": "R", "clap": null },
+    { "beat": 6, "foot": "L", "impact": true },
+    { "beat": 7, "clap": true }
+  ]
+}

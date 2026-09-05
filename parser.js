@@ -140,7 +140,11 @@ function parsePhrase(raw, ctx, warn) {
     out.push({ kind: "hold", txt: cap(p) });
     return out;
   }
-  if (/^(hold|clap|snap|slap)\b/.test(lower)) { out.push({ kind: "hold", txt: cap(p) }); return out; }
+  // claps/snaps/slaps are percussive accents, not holds: they get their own
+  // event kind so the renderer can flash them and the click track can voice
+  // them (a plain hold stays silent and invisible)
+  if (/^(clap|snap|slap)\b/.test(lower)) { out.push({ kind: "clap", txt: cap(p) }); return out; }
+  if (/^hold\b/.test(lower)) { out.push({ kind: "hold", txt: cap(p) }); return out; }
   if (/\b(bump|hip)\b/.test(lower) &&
       !/\b(step(?:s|ping)?|rock|walk|cross|touch|kick|point)\b/.test(lower)) {
     ctx.mode = "bump";
@@ -692,6 +696,7 @@ function parseStepsheet(text) {
         const ev = { beat, c: tk.c, txt: st.txt };
         if (st.turn) ev.turn = st.turn;
         if (st.kind === "hold") { /* no movement */ }
+        else if (st.kind === "clap") { ev.clap = true; }
         else if (st.kind === "recover") { ev.weight = st.foot; }
         else if (st.kind === "pivot") { ev.weight = other(lastFootForPivot || "L"); }
         else {
