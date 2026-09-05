@@ -434,3 +434,122 @@ While the YT player initializes after loading a sheet with music, frame()'s
 synced branch computes state.t = NaN for a few frames (getCurrentTime /
 music.start race) and render() logs NaN-attribute console errors until the
 player readies. Playback code, outside camera territory.
+
+# Round 4: capped catch-up pan + touch-still gate (style round 2)
+
+New VIEW3D knobs (all URL-overridable): camVmax 2.5 (floor units/s cap on the
+catch-up pan), camAccel 0.15 (per-frame ease of the pan speed itself),
+touchStill 1 (no-weight beside-touches count as settled and the camera reads
+the parked stance). `camVmax=10000&camAccel=1&touchStill=0` restores round 3
+bit-identically (verified: identical stats + trace on amame 39-46 against the
+pre-change build). All three 3D-only; the classic 2D camera is byte-identical
+under either setting (verified: 2D sim traces identical across the toggle).
+
+## Method updates
+
+- `__sim(from, beats, warm, fps=60)` grew an fps argument (the leash law is
+  now dt-scaled, so 30fps behavior is a real acceptance surface) and traces
+  cam x/y per frame; `__camDrift(trace)` measures hold stillness as the
+  bounding-box diagonal the camera visits.
+- `__sim` now pins state.azim/effTilt after seek(): seek deliberately keeps
+  the side angle across scrubs (UX), but azimDead then parks a sub-1.5-deg
+  leftover from the previous run forever and consecutive A/B sims inherited
+  each other's azimuth. Round-1..3 numbers are unaffected in substance; exact
+  reproduction of old runs needs the pin removed.
+- `__viewStats`/`__simCorpus` report maxLeadU/worstMaxLead (peak camera-to-
+  target distance, floor units) so the leash's new failure mode — lag growing
+  while the pan saturates at camVmax — is measured, not guessed.
+- `__camPrecedence(from, beats)`: sims a segment twice, second run with every
+  detectable render-layer cosmetic knob zeroed (thudPx today; bump/hold-
+  texture knobs are picked up by name when the motion workstream lands), and
+  asserts camera traces are bit-identical. The input contract itself is
+  documented above render() in index.html: camera foot inputs are keyframe-
+  interpolated positions only, cosmetics never steer the mid.
+- Sims are only deterministic once a sheet's async music lookup has settled
+  (it can rewrite state.bpm mid-sim — the harness's known race); both sweeps
+  below ran back-to-back in one settled session, and every per-sheet rotation
+  metric matching across the two runs confirms bpm held still.
+
+## Law changes
+
+1. **Capped, eased catch-up pan.** The recenter/leash pull (round 3's
+   camLag-weighted pull plus the CAM_MAX_LEAD excess drag) now sets a goal
+   SPEED (dist * pull * 60, clamped to camVmax); state.camVel eases toward it
+   at camAccel and the camera moves camVel*dt along the error, with rotVel's
+   anti-overshoot (never glide past the target, kill the speed there). The
+   round-3 law was per-frame, so it both spiked the moment a turning
+   lock-shuffle opened a lead AND doubled at 30fps. 10:35 beats 20-30
+   (S3 turns into the S4 turning lock-shuffles, bpm 100): maxCam
+   4.38 -> 2.50 u/s at 60fps, 6.57 -> 2.48 at 30fps (acceptance: <=3).
+   The 30fps speed trace decays 2.5 -> 0.8 u/s smoothly after the burst —
+   no residual lag oscillation (gypsy-queen's worst burst likewise: lead
+   2.46 -> 0.14 over ~2.7 beats, monotone once travel stops).
+   Cost: the lead can now exceed CAM_MAX_LEAD while the dancer outruns
+   2.5 u/s — corpus worstMaxLead 1.62 -> 2.52 (gypsy-queen wall 2 beat
+   ~43.9). Verified visually at that exact frame: dancer fully in the
+   520x440 viewBox, reads as a natural operator trailing a run.
+   Seam guard: threshold untouched (mid jump > 1.5 u/frame); forced
+   teleport still snaps cam + camVel + fade (test: snapped, camVel 0,
+   fade armed).
+
+2. **Touch-still gate + parked-stance anchor.** traveling was
+   `!L.settled || !R.settled`, and a beside-touch keyframe (TOUCH badge,
+   |dxo| < 1.1, |dyo| < 0.5, lifted so it never takes weight) both held the
+   gate open and yanked the camera target: Amame's sway/touch phrase keeps a
+   wide stance whose true mid never moves while the touch keyframes swing
+   the raw foot mid ~0.4 u every other beat. camFootPos() now feeds the
+   camera the last grounded stance position through a touch phrase (easing
+   to the landing over the move window when the phrase ends in a real step)
+   and such phrases count as settled. Amame sway phrase (sim 42.5+4):
+   camera drift 0.578 -> 0.061 u (acceptance < 0.1); the touch counts alone
+   (43-46.4) are 0.000 — dead still, verified in stills at beats 43 and 45
+   (identical cam position, boots visibly swaying). Genuine travel
+   (amame 8-16): avgCam 0.91 -> 0.90, maxLag/maxLead unchanged — the
+   deadband still releases. The turn arc keeps reading the raw feet mid.
+
+3. **PRECEDENCE guard.** __camPrecedence over the Tush Push bump block
+   (beats 12-19, thudPx toggled): maxDelta 0.0 across 288 frames — camera
+   traces identical with cosmetics on and off. Contract comment sits at the
+   camera input in index.html; the knob list in the harness is the place to
+   register future cosmetic offsets (hip bumps, hold textures), never a
+   camera exception.
+
+## Corpus sweep (25 sheets, wall 2, bpm 100) — round-3 law vs round 4
+
+Baseline = round-3 law restored via overrides on this exact build (the
+round-3 section's absolute turn numbers no longer reproduce on main — the
+boots/cues merges landed after that log and real bpm now resolves for
+music-matched sheets — so the honest comparison holds everything fixed and
+varies only the law; restore-fidelity was verified bit-identical on amame
+against the pre-change build).
+
+- worstMaxCam 5.57 -> 2.50 u/s; per-sheet maxCam <= 2.50 everywhere
+  (was > 3 u/s on 10 sheets, worst cajun-queen 5.57).
+- Hold stillness: avgCam equal or lower on every sheet (biggest drops:
+  electric-slide 1.09 -> 0.90, one-step-forward 0.60 -> 0.41, mamma-maria
+  1.04 -> 0.90, drunken-sailor 0.54 -> 0.45 — touch-heavy sheets). Zero
+  regressions.
+- Seam/turn behavior: maxLag and unsettled-turn counts identical on all 25
+  sheets; free-run loop crossings continuous as in round 3.
+- maxLeadU: worst 1.62 -> 2.52 (5 sheets now peak 1.9-2.5 during their
+  fastest travel bursts; all verified <= half a viewport with the dancer in
+  frame at the gypsy-queen worst case).
+- maxRot: 4 sheets tick up a few deg/s (e.g. watermelon-crawl 119.8 ->
+  133.8) but none above the standing 134 = rotVmax 120 + azimVmax 14
+  design ceiling that most sheets already touch: the anchored mid changes
+  the velocity the azimuth law sees, shifting when its (capped) swing
+  coincides with a follow pan. Judged in-family; the caps hold.
+
+node tests/run.js: 172/172.
+
+## Noticed, not done (round 4)
+
+- Live playback cannot be exercised in a hidden browser pane at all (rAF
+  fully suspends, t never advances); all dynamics verification is the
+  deterministic sim + manually driven stills, per the round ground rules.
+- The YT-init NaN race (round 3's known pre-existing issue) reproduces
+  unchanged; still playback plumbing, still not camera territory.
+- Side/forward touches (POINT, |dxo| >= 1.1) still move the camera target;
+  scoped out deliberately — they read as figure extension, not sway texture.
+  If footage review disagrees, widen isBesideTouchKF rather than gating on
+  badge names elsewhere.
