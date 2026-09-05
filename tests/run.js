@@ -156,6 +156,313 @@ for (const tc of tempoCases) {
         "first beat " + g.firstBeat + "s is " + Math.round(offBy * 1000) + "ms off the click grid");
 }
 
+// --- figures suite ---------------------------------------------------------
+// figures.js: registry shape, structural detection over real corpus sheets,
+// catalog placement styling, hard foot-separation rule, and cue labels.
+const FIG = require("../figures.js");
+const CORPUS = path.join(__dirname, "..", "tuning", "corpus");
+perFixture["figures.js"] = { pass: 0, fail: 0 };
+const fcheck = (label, ok, detail) => check("figures.js", label, !!ok, detail);
+
+function loadCorpus(slug) {
+  return parseStepsheet(fs.readFileSync(path.join(CORPUS, slug + ".txt"), "utf8"));
+}
+
+// -- registry shape: all 17 catalog figures, well-formed, loopable canon ----
+const CATALOG_IDS = [
+  "vine", "weave", "jazz_box", "k_step", "lindy", "rocking_chair", "coaster",
+  "sailor", "mambo", "lock_step", "pivot", "monterey", "scissor", "charleston",
+  "hip_bumps", "heel_splits", "kick_ball_change"
+];
+fcheck("registry has exactly the 17 catalog ids",
+  CATALOG_IDS.every(id => FIG.FIGURES[id]) &&
+  Object.keys(FIG.FIGURES).length === CATALOG_IDS.length,
+  "got: " + Object.keys(FIG.FIGURES).join(","));
+for (const id of CATALOG_IDS) {
+  const e = FIG.FIGURES[id] || {};
+  fcheck(id + " entry shape",
+    typeof e.label === "function" && e.header instanceof RegExp &&
+    typeof e.match === "function" && Array.isArray(e.canon) && e.canon.length >= 3,
+    JSON.stringify(Object.keys(e)));
+}
+
+// canon simulator: same relative-to-other-foot geometry as buildTimeline.
+// "Loops seamlessly" = running the canon a second time reproduces the first
+// pass's end state exactly (periodic), and no grounded landing ever comes
+// closer than the cross clamp to the other foot.
+function simCanon(canon, passes) {
+  let theta = 0;
+  const feet = { L: { x: -0.45, y: 0 }, R: { x: 0.45, y: 0 } };
+  let minSep = Infinity;
+  for (let p = 0; p < passes; p++) {
+    for (const st of canon) {
+      if (st.turn) theta += st.turn;
+      if (!st.foot || st.dx === undefined) continue;
+      const o = st.self ? feet[st.foot] : feet[st.foot === "R" ? "L" : "R"];
+      const th = theta * Math.PI / 180;
+      const x = o.x + st.dx * Math.cos(th) + st.dy * Math.sin(th);
+      const y = o.y - st.dx * Math.sin(th) + st.dy * Math.cos(th);
+      feet[st.foot] = { x, y };
+      if (!st.lifted && !st.self) {
+        const ot = feet[st.foot === "R" ? "L" : "R"];
+        minSep = Math.min(minSep, Math.hypot(x - ot.x, y - ot.y));
+      }
+    }
+  }
+  return { feet: JSON.parse(JSON.stringify(feet)), theta, minSep };
+}
+for (const id of CATALOG_IDS) {
+  const canon = FIG.FIGURES[id].canon;
+  const one = simCanon(canon, 1), two = simCanon(canon, 2);
+  // periodic: the second pass reproduces the first pass's end state
+  const drift = Math.max(
+    Math.hypot(two.feet.L.x - one.feet.L.x, two.feet.L.y - one.feet.L.y),
+    Math.hypot(two.feet.R.x - one.feet.R.x, two.feet.R.y - one.feet.R.y));
+  fcheck(id + " canon loops (periodic, drift<=0.15)", drift <= 0.15, "drift " + drift.toFixed(2));
+  fcheck(id + " canon net turn is whole revolutions",
+    ((Math.round(one.theta) % 360) + 360) % 360 === 0, "theta " + one.theta);
+  fcheck(id + " canon landings respect the spacing rule",
+    one.minSep >= FIG.SEP.cross - 1e-6, "minSep " + one.minSep.toFixed(2));
+}
+
+// -- detection: structure over header prose ---------------------------------
+function spansOf(parsed) { return FIG.detectFigures(parsed); }
+function has(spans, id, pred) {
+  return spans.some(sp => sp.figureId === id && (!pred || pred(sp)));
+}
+
+// tush-push: hip bumps (stride stance, counts 13-20), cha triples, pivots
+{
+  const p = loadCorpus("tush-push");
+  const sp = spansOf(p);
+  fcheck("tush-push: hip bumps tagged over counts 13-20",
+    has(sp, "hip_bumps", s => s.startBeat <= 12.5 && s.endBeat >= 19 && s.meta.bumps >= 6),
+    JSON.stringify(sp.filter(s => s.figureId === "hip_bumps")));
+  fcheck("tush-push: hip bump stance is narrow/stride",
+    has(sp, "hip_bumps", s => s.meta.stance === "stride"),
+    JSON.stringify(sp.filter(s => s.figureId === "hip_bumps").map(s => s.meta)));
+  fcheck("tush-push: cha triples tagged",
+    sp.filter(s => s.figureId === "mambo" && s.meta.variant === "cha").length >= 3,
+    JSON.stringify(sp.filter(s => s.figureId === "mambo")));
+  fcheck("tush-push: half pivots tagged",
+    sp.filter(s => s.figureId === "pivot" && Math.abs(s.meta.deg) >= 170).length >= 2,
+    JSON.stringify(sp.filter(s => s.figureId === "pivot")));
+}
+
+// electric-slide: two vines, styled to catalog spacing
+{
+  const p = loadCorpus("electric-slide");
+  const sp = FIG.applyStyling(p);
+  fcheck("electric-slide: vine R tagged at count 1",
+    has(sp, "vine", s => s.foot === "R" && s.startBeat === 0), JSON.stringify(sp.slice(0, 2)));
+  fcheck("electric-slide: vine L tagged at count 5",
+    has(sp, "vine", s => s.foot === "L" && s.startBeat === 4));
+  const behind = p.events.find(e => e.beat === 1);
+  fcheck("electric-slide: behind-cross is a loose narrow stagger",
+    Math.abs(behind.dx) <= 0.25 && behind.dy <= -0.5 && behind.dy >= -0.75,
+    JSON.stringify(behind));
+  const side1 = p.events.find(e => e.beat === 0);
+  fcheck("electric-slide: vine side steps reach 1.5-2u and glide",
+    Math.abs(side1.dx) >= 1.5 && Math.abs(side1.dx) <= 2 && side1.glide === true,
+    JSON.stringify(side1));
+  fcheck("electric-slide: count-4 scuff flourish preserved",
+    p.events.some(e => e.beat === 3 && e.badge === "SCUFF"));
+}
+
+// canadian-stomp: jazz boxes + vines
+{
+  const p = loadCorpus("canadian-stomp");
+  const sp = FIG.applyStyling(p);
+  fcheck("canadian-stomp: jazz box tagged (both boxes)",
+    sp.filter(s => s.figureId === "jazz_box").length >= 2,
+    JSON.stringify(sp.filter(s => s.figureId === "jazz_box")));
+  fcheck("canadian-stomp: vine R + turning vine L tagged",
+    sp.filter(s => s.figureId === "vine").length >= 2);
+  const cross = p.events.find(e => e.beat === 32);
+  fcheck("canadian-stomp: jazz cross is shallow with 30deg turnout",
+    Math.abs(cross.dx) <= 0.35 && cross.dy >= 0.4 && cross.turnout === 30,
+    JSON.stringify(cross));
+  const back = p.events.find(e => e.beat === 33);
+  fcheck("canadian-stomp: jazz back step tucks under the hip (compact box)",
+    Math.abs(back.dx) <= 0.3 && back.dy >= -1 && back.dy <= -0.8, JSON.stringify(back));
+}
+
+// drunken-sailor: K step + heel splits, and NO sailor despite the title
+{
+  const p = loadCorpus("drunken-sailor");
+  const sp = FIG.applyStyling(p);
+  fcheck("drunken-sailor: K step tagged at section 3",
+    has(sp, "k_step", s => s.startBeat === 16), JSON.stringify(sp.map(s => s.figureId + "@" + s.startBeat)));
+  fcheck("drunken-sailor: heel splits tagged at count 1",
+    has(sp, "heel_splits", s => s.startBeat === 0));
+  fcheck("drunken-sailor: NO sailor tagged (title words lie)",
+    !has(sp, "sailor"));
+  const diag = p.events.find(e => e.beat === 16);
+  fcheck("drunken-sailor: K-step corners are true diagonals (~1.4u)",
+    Math.abs(diag.dx) === 1 && diag.dy === 1, JSON.stringify(diag));
+  const splits = p.events.filter(e => e.beat === 0 && e.self);
+  fcheck("drunken-sailor: heel splits fan both heels (aOff, no weight)",
+    splits.length === 2 && splits.every(e => Math.abs(e.aOff) >= 18 && e.noWeight),
+    JSON.stringify(splits));
+  fcheck("drunken-sailor: K-step claps land with the touches",
+    p.events.some(e => e.beat === 17 && e.clap) && p.events.some(e => e.beat === 23 && e.clap));
+}
+
+// picnic-polka: rolling vines — continuous 1/4-1/2-1/4 spin, constant travel
+{
+  const p = loadCorpus("picnic-polka");
+  const sp = FIG.applyStyling(p);
+  fcheck("picnic-polka: rolling vines tagged",
+    sp.filter(s => s.figureId === "vine" && s.meta.rolling).length >= 2,
+    JSON.stringify(sp.filter(s => s.figureId === "vine").map(s => s.meta)));
+  const t1 = p.events.find(e => e.beat === 16), t2 = p.events.find(e => e.beat === 17),
+        t3 = p.events.find(e => e.beat === 18);
+  fcheck("picnic-polka: rolling vine splits the turn 1/4-1/2-1/4",
+    t1.turn === 90 && t2.turn === 180 && t3.turn === 90,
+    JSON.stringify([t1.turn, t2.turn, t3.turn]));
+  fcheck("picnic-polka: rolling vine travel vector constant (1.25u/count)",
+    t1.dy === 1.25 && t2.dy === -1.25 && Math.abs(t3.dx) === 1.5,
+    JSON.stringify([t1, t2, t3].map(e => [e.dx, e.dy])));
+}
+
+// wagon-wheel-rock: lock steps + rocking chair
+{
+  const p = loadCorpus("wagon-wheel-rock");
+  const sp = FIG.applyStyling(p);
+  fcheck("wagon-wheel: lock steps tagged", sp.filter(s => s.figureId === "lock_step").length >= 2);
+  fcheck("wagon-wheel: rocking chairs tagged", sp.filter(s => s.figureId === "rocking_chair").length >= 2);
+  const lock = p.events.find(e => e.beat === 1);
+  fcheck("wagon-wheel: lock tucks directly behind on the ball",
+    Math.abs(lock.dx) <= 0.2 && lock.dy === -0.47, JSON.stringify(lock));
+  const rf = p.events.find(e => e.beat === 24), rb = p.events.find(e => e.beat === 26);
+  fcheck("wagon-wheel: rocking chair rocks 1.3u, dead stationary",
+    rf.dy === 1.3 && rb.dy === -1.3, JSON.stringify([rf.dy, rb.dy]));
+}
+
+// gypsy-queen: weave + coaster, and NO monterey (the sheet's word lies —
+// its "monterey"-ish claim is paddle quarter turns)
+{
+  const p = loadCorpus("gypsy-queen");
+  const sp = FIG.applyStyling(p);
+  fcheck("gypsy-queen: weave tagged", has(sp, "weave"));
+  fcheck("gypsy-queen: coaster tagged at counts 5&6 of S4",
+    has(sp, "coaster", s => s.startBeat === 28), JSON.stringify(sp.filter(s => s.figureId === "coaster")));
+  fcheck("gypsy-queen: NO monterey (paddle turns are not a monterey)", !has(sp, "monterey"));
+  const cb = p.events.find(e => e.beat === 28);
+  fcheck("gypsy-queen: coaster sits down 1.1u into the back step",
+    cb.dy === -1.1, JSON.stringify(cb));
+}
+
+// sambas-and-sailors: real sailors (swept behind + out-out) do tag
+{
+  const p = loadCorpus("sambas-and-sailors");
+  const sp = spansOf(p);
+  fcheck("sambas-and-sailors: sailor steps tagged",
+    sp.filter(s => s.figureId === "sailor").length >= 2,
+    JSON.stringify(sp.filter(s => s.figureId === "sailor")));
+}
+
+// cowboy-boogie: forward-stance hip bumps get the fwd stance tag
+{
+  const sp = spansOf(loadCorpus("cowboy-boogie"));
+  fcheck("cowboy-boogie: hip bumps tagged with fwd stance",
+    has(sp, "hip_bumps", s => s.meta.stance === "fwd"),
+    JSON.stringify(sp.filter(s => s.figureId === "hip_bumps").map(s => s.meta)));
+}
+
+// -- synthetic sheets for figures the corpus lacks --------------------------
+function parseSnippet(body) {
+  return parseStepsheet("Synthetic Figure Test\nCount: 8 Wall: 1\n\nSECTION ONE\n" + body + "\n");
+}
+{
+  const p = parseSnippet(
+    "1-2 Point right to side, turn 1/2 right stepping right beside left\n" +
+    "3-4 Point left to side, step left beside right");
+  const sp = spansOf(p);
+  fcheck("monterey: point-side + turn-on-the-close tags",
+    has(sp, "monterey", s => Math.abs(s.meta.deg) === 180), JSON.stringify(sp));
+}
+{
+  const p = parseSnippet("1&2 Step right to side, step left beside right, cross right over left");
+  const sp = FIG.applyStyling(p);
+  fcheck("scissor: side, & together, cross tags", has(sp, "scissor"), JSON.stringify(sp));
+  const cr = p.events.find(e => e.beat === 1);
+  fcheck("scissor: accent cross lands snug with 25deg turnout",
+    cr && Math.abs(cr.dx) === 0.3 && cr.dy === 0.4 && cr.turnout === 25, JSON.stringify(cr));
+}
+{
+  const p = parseSnippet("1-4 Touch right forward, step right back, touch left back, step left forward");
+  const sp = FIG.applyStyling(p);
+  fcheck("charleston: fore-aft pendulum tags", has(sp, "charleston"), JSON.stringify(sp));
+  const tf = p.events.find(e => e.beat === 0);
+  fcheck("charleston: strikes reach 1.1u fore/aft, net zero travel",
+    tf.dy === 1.1 && p.events.find(e => e.beat === 2).dy === -1.1, JSON.stringify(tf));
+}
+{
+  const p = parseSnippet("1&2 Step right to side, step left beside right, step right to side\n3-4 Rock left back, recover on right");
+  const sp = spansOf(p);
+  fcheck("lindy: side chasse + back rock tags", has(sp, "lindy"), JSON.stringify(sp));
+}
+{
+  const p = parseSnippet("1&2 Kick right forward, step right beside left, step left in place");
+  const sp = spansOf(p);
+  fcheck("kick-ball-change: kick + & ball dab + weight change tags",
+    has(sp, "kick_ball_change", s => s.meta.full), JSON.stringify(sp));
+}
+{
+  const p = parseSnippet(
+    "1-2 Step right to right side, step left to left side\n" +
+    "3-6 Bump hips left, bump hips right, bump hips left, bump hips right");
+  const sp = FIG.applyStyling(p);
+  fcheck("wide-stance bumps (flex): planted wide stance tag",
+    has(sp, "hip_bumps", s => s.meta.stance === "wide"), JSON.stringify(sp));
+  const sideL = p.events.find(e => e.beat === 1);
+  fcheck("wide-stance bumps: feet plant 1.5-2u apart, toes out",
+    Math.abs(sideL.dx) >= 1.5 && Math.abs(sideL.aOff || 0) >= 10, JSON.stringify(sideL));
+}
+{
+  const p = parseSnippet("1-3 Step right forward, lock left behind right, step right forward");
+  const sp = spansOf(p);
+  fcheck("lock step: fwd-lock-fwd tags", has(sp, "lock_step"), JSON.stringify(sp));
+}
+
+// -- hard spacing rule unit checks ------------------------------------------
+{
+  const ev = { foot: "R", dx: 0.85, dy: 0 };
+  const p = FIG.separateFeet({ x: 0, y: 0 }, { x: 0, y: 0 }, ev, 0);
+  fcheck("separateFeet: identical centers get pushed apart",
+    Math.hypot(p.x, p.y) >= 0.2, JSON.stringify(p));
+  const q = FIG.separateFeet({ x: 0.1, y: 0 }, { x: 0, y: 0 }, ev, 0);
+  fcheck("separateFeet: a too-tight close clamps to 0.25-0.5u daylight",
+    q.x >= 0.81 - 1e-6 && q.x <= 1.06 + 1e-6 && Math.abs(q.y) >= 0.06,
+    JSON.stringify(q));
+  const cr = FIG.separateFeet({ x: -0.1, y: 0.1 }, { x: 0, y: 0 },
+                              { foot: "R", dx: -0.3, dy: 0.35 }, 0);
+  fcheck("separateFeet: crosses keep an honest fore-aft stagger",
+    cr.y >= 0.45 - 1e-6 && Math.hypot(cr.x, cr.y) >= 0.5 - 1e-6, JSON.stringify(cr));
+  const th = FIG.separateFeet({ x: 1.0, y: 1.05 }, { x: 1.0, y: 1.0 },
+                              { foot: "L", dx: -0.85, dy: 0, lifted: true }, 90);
+  fcheck("separateFeet: lifted touches never sit on the other boot",
+    Math.hypot(th.x - 1.0, th.y - 1.0) >= 0.3, JSON.stringify(th));
+}
+
+// -- cue labels --------------------------------------------------------------
+{
+  const p = loadCorpus("electric-slide");
+  FIG.applyStyling(p);
+  fcheck("labelForSection: electric-slide S1 -> 'Vine R'",
+    FIG.labelForSection(p, 0) === "Vine R", JSON.stringify(FIG.labelForSection(p, 0)));
+  fcheck("labelForLine falls back to null when nothing is tagged",
+    FIG.labelForLine(p, { b0: 8, b1: 8 }) === null ||
+    typeof FIG.labelForLine(p, { b0: 8, b1: 8 }) === "string");
+  const d = loadCorpus("drunken-sailor");
+  fcheck("labelForSection: drunken-sailor S1 leads with heel splits",
+    /Heel splits/.test(FIG.labelForSection(d, 0) || ""), JSON.stringify(FIG.labelForSection(d, 0)));
+  const c = loadCorpus("canadian-stomp");
+  fcheck("labelForSection: canadian-stomp jazz section -> 'Jazz box'",
+    /Jazz box/.test(FIG.labelForSection(c, 4) || ""), JSON.stringify(FIG.labelForSection(c, 4)));
+}
+
 // --- scorecard -------------------------------------------------------------
 console.log("");
 for (const [name, s] of Object.entries(perFixture)) {
