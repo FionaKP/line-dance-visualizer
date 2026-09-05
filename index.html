@@ -1954,6 +1954,7 @@ function detectSectionFigure(secIdx) {
   if (/grapevine|\bvine\b/.test(hay)) return withDir("Vine") + turnSuffix(hay);
   if (/lock\s*step/.test(hay)) return "Lock step";
   if (/scissor/.test(hay)) return "Scissors";
+  if (/cha[\s-]?cha/.test(hay)) return withDir("Cha-cha") + turnSuffix(hay);
   if (/shuffle|chass[eé]/.test(hay)) {
     const way = /forward|fwd/.test(hay) ? "fwd" : /\bback(ward)?\b/.test(hay) ? "back" : dir;
     return ("Shuffle" + (way ? " " + way : "")) + turnSuffix(hay);
