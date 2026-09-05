@@ -715,6 +715,18 @@ const VIEW3D = {
                    // than the boots so the rotation keeps reading in them
   camDead: 0.15,   // floor units: inside this the settled recenter pull is skipped
                    // entirely so holds are dead still (no exponential-tail drift)
+  camVmax: 2.5,    // floor units/s cap on the catch-up pan — the camera operator's
+                   // walking speed. Round 3's frame-based pull spiked to ~7.6 u/s
+                   // when a turning lock-shuffle opened a big lead (10:35 S4);
+                   // capped, the camera trails the burst and glides in after it.
+                   // camVmax=10000&camAccel=1 restores the round-3 pull exactly.
+  camAccel: 0.15,  // per-frame ease of the pan speed itself toward its goal —
+                   // the same hand-on-a-tripod law as rotAccel: pans accelerate
+                   // and brake instead of stepping to full speed in one frame
+  touchStill: 1,   // 1: a no-weight beside-the-foot touch counts as settled and
+                   // the camera reads the foot's last grounded stance instead of
+                   // the touch excursion (hip-sway touch phrases hold dead still);
+                   // 0 restores the round-3 gate exactly
   azimDead: 1.5,   // deg: azimuth error smaller than this is ignored — the side
                    // angle parks instead of creeping during stillness
   thudPx: 2,       // px of vertical frame dip when a stomp lands (0 disables)
@@ -744,22 +756,24 @@ function azimuthTarget(svx, svy, speed) {
 // experiments. Rotation rates in deg/s, camera speed in floor units/s.
 window.__viewStats = (() => {
   let frames = 0, elapsed = 0, maxRot = 0, sumRot = 0, maxCam = 0, sumCam = 0,
-      maxFollow = 0, maxLag = 0;
+      maxFollow = 0, maxLag = 0, maxLead = 0;
   return {
-    tick(rotRate, camSpeed, dt, followRate, lagErr) {
+    tick(rotRate, camSpeed, dt, followRate, lagErr, leadU) {
       frames++; elapsed += dt;
       maxRot = Math.max(maxRot, rotRate); sumRot += rotRate * dt;
       maxCam = Math.max(maxCam, camSpeed); sumCam += camSpeed * dt;
       maxFollow = Math.max(maxFollow, followRate || 0);
       maxLag = Math.max(maxLag, lagErr || 0);
+      maxLead = Math.max(maxLead, leadU || 0);
     },
     reset() { frames = 0; elapsed = 0; maxRot = 0; sumRot = 0; maxCam = 0; sumCam = 0;
-              maxFollow = 0; maxLag = 0; },
+              maxFollow = 0; maxLag = 0; maxLead = 0; },
     read() {
       return { frames, elapsed: +elapsed.toFixed(2),
                maxRotRate: +maxRot.toFixed(1), avgRotRate: +(elapsed ? sumRot / elapsed : 0).toFixed(1),
                maxCamSpeed: +maxCam.toFixed(2), avgCamSpeed: +(elapsed ? sumCam / elapsed : 0).toFixed(2),
-               maxFollowRate: +maxFollow.toFixed(1), maxLagDeg: +maxLag.toFixed(1) };
+               maxFollowRate: +maxFollow.toFixed(1), maxLagDeg: +maxLag.toFixed(1),
+               maxLeadU: +maxLead.toFixed(2) };
     }
   };
 })();
@@ -1291,6 +1305,7 @@ const state = {
   introCountdown: null,
   cam: { x: 0, y: 0 },
   camLag: 0,
+  camVel: 0,
   view3d: true,
   azim: 0,
   effTilt: 0,
@@ -1325,12 +1340,55 @@ function clockLabel(theta) {
 }
 let lastClock = "12:00";
 
+// --- camera input contract (PRECEDENCE) -----------------------------------
+// The camera's foot-position inputs are the keyframe-interpolated footState
+// positions (plus the beside-touch anchor substitution below) and NOTHING
+// else. Render-layer cosmetic offsets — hip bumps, hold textures, heel pops,
+// groove dips, thud shakes — are applied downstream of this point, on the
+// drawn boots or the #world transform, and MUST NOT be added to the mid the
+// camera chases: a cosmetic wiggle that steered the camera would turn set
+// dressing into motion. tuning/simharness.js __camPrecedence() sims a
+// segment with cosmetics on and off and asserts identical camera traces.
+
+// A no-weight beside-the-foot touch (TOUCH badge, tight beside meta, lifted
+// so it never takes weight) is a cosmetic excursion of a parked foot — the
+// dancer has not gone anywhere. Amame's hip-sway touch phrase keeps the
+// stance wide and still while the beside-touch keyframes yank the raw foot
+// mid ~0.4 units every other beat; chasing that reads as a wandering camera
+// through what the footage calls a held groove.
+function isBesideTouchKF(k) {
+  return !!k && k.lifted && (k.badge === "TOUCH" || k.badge === "TOE") &&
+         k.dxo !== undefined && Math.abs(k.dxo) < 1.1 && Math.abs(k.dyo || 0) < 0.5;
+}
+
+// The camera's view of one foot: normally the footState position; during a
+// beside-touch phrase, the last grounded stance position before the touches
+// (still:true = counts as settled for the stillness gate). A touch phrase
+// that ends in a genuine step eases the anchor to the landing over the
+// step's move window so the handover never kinks the mid.
+function camFootPos(foot, t, fs) {
+  if (!state.view3d || !VIEW3D.touchStill) return { x: fs.x, y: fs.y, still: false };
+  const arr = kf[foot];
+  const i = findIdx(arr, t);
+  const prev = arr[i], next = arr[i + 1];
+  const nT = isBesideTouchKF(next);
+  if (!isBesideTouchKF(prev) && !nT) return { x: fs.x, y: fs.y, still: false };
+  let j = i;
+  while (j > 0 && isBesideTouchKF(arr[j])) j--;
+  const g = arr[j];
+  if (!next || nT || t < next.t - MOVE_WINDOW) return { x: g.x, y: g.y, still: true };
+  const u = Math.min(1, (t - (next.t - MOVE_WINDOW)) / MOVE_WINDOW);
+  const e = u * u * (3 - 2 * u);
+  return { x: g.x + (next.x - g.x) * e, y: g.y + (next.y - g.y) * e, still: false };
+}
+
 function render() {
   const t = state.t;
   const L = footState("L", t);
   const R = footState("R", t);
   const theta = thetaAt(t);
-  const midX = (L.x + R.x) / 2, midY = (L.y + R.y) / 2;
+  const camL = camFootPos("L", t, L), camR = camFootPos("R", t, R);
+  const midX = (camL.x + camR.x) / 2, midY = (camL.y + camR.y) / 2;
 
   const nowMs = performance.now();
   const rawDt = lastFrameMs === null ? 1 / 60 : Math.min(0.1, (nowMs - lastFrameMs) / 1000);
@@ -1347,6 +1405,7 @@ function render() {
   if (prevMid && Math.hypot(midX - prevMid.x, midY - prevMid.y) > 1.5) {
     state.cam.x = midX; state.cam.y = midY;
     state.camLag = 0;
+    state.camVel = 0;
     velSm.x = 0; velSm.y = 0;
     prevMid = { x: midX, y: midY };
     prevTheta = null;
@@ -1362,7 +1421,11 @@ function render() {
   const camPX = state.cam.x, camPY = state.cam.y;
   const errX = midX - state.cam.x, errY = midY - state.cam.y;
   const dist = Math.hypot(errX, errY);
-  const traveling = !L.settled || !R.settled;
+  // a foot mid-flight toward or held in a beside-touch is not travel: the
+  // stance is parked and the excursion is cosmetic (camFootPos already reads
+  // the parked stance), so the stillness gate stays closed through touch
+  // phrases while any genuine step still releases it
+  const traveling = (!L.settled && !camL.still) || (!R.settled && !camR.still);
   state.camLag = Math.min(1, Math.max(0, state.camLag + (traveling ? 0.10 : -0.035)));
   // stillness deadband: inside camDead the recenter pull is skipped entirely —
   // the exponential tail otherwise drifts the frame sub-pixel for seconds
@@ -1374,8 +1437,29 @@ function render() {
     // hard leash: past CAM_MAX_LEAD the camera is dragged along regardless
     const excess = dist - CAM_MAX_LEAD;
     if (excess > 0) pull += excess / dist * 0.5;
-    state.cam.x += errX * pull;
-    state.cam.y += errY * pull;
+    // hand-on-a-tripod translation (3D only; 2D keeps the round-3 per-frame
+    // pull exactly): the pull law above sets a goal SPEED, capped at the
+    // operator's walking pace camVmax, and the actual pan speed eases toward
+    // it (camAccel) so catch-up pans accelerate, cruise, and brake instead of
+    // spiking to ~7.6 u/s the frame a turning lock-shuffle opens a lead. The
+    // hard-leash excess feeds the same goal, so a big lead asks for full
+    // speed but never teleports the frame. Anti-overshoot mirrors rotVel's:
+    // never glide past the target, kill the speed there.
+    if (state.view3d) {
+      const goal = Math.min(dist * pull * 60, VIEW3D.camVmax);
+      state.camVel += (goal - state.camVel) * VIEW3D.camAccel;
+      let step = state.camVel * dt;
+      if (step >= dist) { step = dist; state.camVel = 0; }
+      state.cam.x += errX / dist * step;
+      state.cam.y += errY / dist * step;
+    } else {
+      state.cam.x += errX * pull;
+      state.cam.y += errY * pull;
+    }
+  } else {
+    // inside the deadband the pan is over: brake the speed state so the next
+    // pan starts from rest instead of inheriting a stale velocity
+    state.camVel += (0 - state.camVel) * VIEW3D.camAccel;
   }
   // --- follow rotation: chase the dancer's facing like a camera operator.
   // The boots rotate on screen first; the view pans after them, never faster
@@ -1466,7 +1550,8 @@ function render() {
   dRot -= 360 * Math.round(dRot / 360); // a whole-revolution renumber is not motion
   window.__viewStats.tick(Math.abs(dRot) / dt,
                           Math.hypot(state.cam.x - camPX, state.cam.y - camPY) / dt, dt,
-                          followRate, Math.abs(state.rotErr));
+                          followRate, Math.abs(state.rotErr),
+                          Math.hypot(midX - state.cam.x, midY - state.cam.y));
 
   // impact thud: a stomp landing dips the whole frame 1-2px with a fast damped
   // decay — the camera shakes, never the floor coordinates or the timing. A
@@ -1516,7 +1601,7 @@ function render() {
   renderTrail("R", elTrailR, elDotR, t);
   renderImpact("L", elImpactL, t);
   renderImpact("R", elImpactR, t);
-  renderTurnArc(t, midX, midY);
+  renderTurnArc(t, (L.x + R.x) / 2, (L.y + R.y) / 2); // raw feet mid: the arc is drawn at the dancer, not the camera target
 
   updateHeelPop(t);
   placeFoot(footGlyphL, elShadowL, elContactL, elBootL, L);
@@ -2145,6 +2230,7 @@ function seek(t) {
   state.cam.x = (L.x + R.x) / 2;
   state.cam.y = (L.y + R.y) / 2;
   state.camLag = 0;
+  state.camVel = 0;
   prevMid = null;
   velSm.x = 0; velSm.y = 0;
   prevTheta = null;
