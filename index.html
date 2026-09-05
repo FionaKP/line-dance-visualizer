@@ -909,7 +909,7 @@ const PROFILES = {
   drag:  { win: 2,    arc: 0.1,  pos: r => ease(Math.max(0, (r - 0.15) / 0.85)) }, // closes own their whole gap: one long floor-contact slide
   glide: { win: 2,    arc: 0.1,  pos: r => 0.5 - 0.5 * Math.cos(Math.PI * r) },    // skates/drags/slides: one steady leather-on-wood glide over the whole gap
   rock:  { arc: 0.45, pos: r => backOut(ease(r), 1.2) },                  // lean past the spot, rebound onto it
-  kick:  { win: 0.9,  arc: 0.5, snapLift: 0.15, pos: r => 1 - Math.pow(1 - r, 3) },  // snap out fast but LOW: a knee-flick, out-and-back under shin height
+  kick:  { win: 0.9,  arc: 0.35, snapLift: 0.08, pos: r => 1 - Math.pow(1 - r, 3) },  // snap out fast but LOW: a knee-flick, out-and-back under shin height (apex capped ~0.43, barely above the 0.35 hold)
   hook:  { win: 0.85, arc: 0.5, pos: r => 1 - Math.pow(1 - r, 2) },       // quick tight tuck
   sweep: { win: 2.2,  arc: 0.2,  pos: r => 0.5 - 0.5 * Math.cos(Math.PI * r) },    // low compass arc: toe-down, full-count, floor-level (bow added in footState)
   place: { win: 1.1,  arc: 0.6 },                                        // touches/points set down gently
@@ -1112,7 +1112,16 @@ function footState(foot, t) {
 // blended attitude for a foot mid-window, plus per-move flourishes that only
 // exist while the foot travels (zero at both ends, so landings never snap)
 function moveAttitude(prev, next, foot, s, raw) {
-  let att = blendAttitude(kfAttitude(prev, foot), kfAttitude(next, foot), s);
+  // held points/taps/heel digs keep their steep attitude late into the
+  // reset: the boot stays anchored well past mid-window and whips flat only
+  // at the very end (a point before an &-together holds until the last
+  // instant — ten-thirty-five side points still read steep at x.4 stills).
+  // Attitude only: position/lift keep the normal ease so landings stay
+  // exactly on their beat.
+  let sAtt = s;
+  if (prev.lifted && (prev.pose === "toe" || prev.pose === "heel") && !next.lifted)
+    sAtt = ease(Math.max(0, (raw - 0.75) / 0.25));
+  let att = blendAttitude(kfAttitude(prev, foot), kfAttitude(next, foot), sAtt);
   if (att && next.badge === "SWEEP") {
     // the sweeping toe fans outward through the arc and settles back
     att.yawOff += (foot === "R" ? 22 : -22) * Math.sin(Math.PI * raw);
