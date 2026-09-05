@@ -344,6 +344,16 @@
     font-size: 0.78rem;
     resize: vertical;
   }
+  .mode-note {
+    background: var(--accent-dim);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--muted);
+    font-size: 0.78rem;
+    line-height: 1.4;
+    padding: 8px 10px;
+    margin-bottom: 10px;
+  }
   .loader .row { display: flex; gap: 8px; margin-top: 8px; align-items: center; }
   .loader .note { color: var(--muted); font-size: 0.75rem; }
   .warnings { margin-top: 8px; font-size: 0.78rem; color: var(--warn); }
@@ -2469,6 +2479,18 @@ function rankMusicResults(results) {
 async function searchMusic() {
   const q = document.getElementById("music-q").value.trim();
   if (!q) { musicStatus("Type a song name first."); return []; }
+  await appMode.ready;
+  if (!appMode.server) {
+    // static mode: no search proxy, but a pasted link or id embeds fine
+    const vid = parseYouTubeId(q);
+    if (vid) {
+      selectVideo(vid, q);
+      musicStatus("Video loaded — Tap tempo while it plays, then set count 1 and press Sync to video.");
+    } else {
+      musicStatus("YouTube search needs the local server (python3 server.py). Paste a YouTube link or video id here instead.");
+    }
+    return [];
+  }
   musicStatus("Searching YouTube…");
   elMusicResults.innerHTML = "";
   try {
@@ -2688,6 +2710,8 @@ async function autoSetupMusic() {
   if (!document.getElementById("music-q").value.trim()) return;
   await new Promise(r => setTimeout(r, 400));       // let the first render land
   if (seq !== autoSetupSeq) return;
+  await appMode.ready;                              // static mode has no music search
+  if (!appMode.server || seq !== autoSetupSeq) return;
   await autoMatchMusic();
 }
 
@@ -2703,26 +2727,42 @@ function nudgeStart(d) {
   saveMusicPrefs();
 }
 
+// Tap tempo: the manual stand-in for the /api/audio beat analysis, and the
+// only tempo source in static mode (no server, plain iframe embed). It fills
+// the exact same state the automatic path does — music.exactBpm drives the
+// video sync clock, the slider shows the rounded value — so tap + a
+// first-beat nudge ("Set to now" / the nudge buttons) gives full synced
+// playback without ever fetching audio.
 let taps = [];
 function tapTempo() {
   const now = performance.now();
-  taps = taps.filter(x => now - x < 3000);
+  // a 2s+ pause starts a fresh run (the old fixed 3s window capped a run at
+  // ~5 taps; a solid estimate wants 8 or more)
+  if (taps.length && now - taps[taps.length - 1] > 2000) taps = [];
   taps.push(now);
-  if (taps.length >= 3) {
-    const gaps = [];
-    for (let i = 1; i < taps.length; i++) gaps.push(taps[i] - taps[i - 1]);
-    const bpm = Math.round(60000 / (gaps.reduce((a, b) => a + b, 0) / gaps.length));
-    if (bpm >= 40 && bpm <= 200) {
-      state.bpm = Math.min(140, bpm);
-      bpmInput.value = state.bpm;
-      bpmVal.textContent = state.bpm + " bpm";
-      reanchor();
-      saveMusicPrefs();
-      musicStatus("Tap tempo: " + bpm + " bpm (" + taps.length + " taps)");
-    }
-  } else {
-    musicStatus("Keep tapping on the beat…");
+  if (taps.length > 48) taps.shift();
+  if (taps.length < 4) {
+    musicStatus("Keep tapping on the beat… (" + taps.length + " — 8+ taps give a solid tempo)");
+    return;
   }
+  // tempo from the whole run's span, not per-gap averages: single-tap jitter
+  // divides away as the run grows (same idea as tempo.js sharpening the
+  // period over an 8-beat autocorrelation window)
+  const bpm = 60000 * (taps.length - 1) / (taps[taps.length - 1] - taps[0]);
+  if (bpm < 40 || bpm > 200) {
+    taps = [];
+    musicStatus("Those taps don't look like a steady beat — try again.");
+    return;
+  }
+  music.exactBpm = Math.round(bpm * 10) / 10;
+  state.bpm = Math.max(40, Math.min(140, Math.round(bpm)));
+  bpmInput.value = state.bpm;
+  bpmVal.textContent = music.exactBpm + " bpm";
+  reanchor();
+  saveMusicPrefs();
+  musicStatus("Tap tempo: " + music.exactBpm + " bpm from " + taps.length + " taps" +
+              (taps.length < 8 ? " — keep going, 8+ is accurate" : "") +
+              ". Now set count 1 (“Set to now” at the first step, then nudge).");
 }
 
 document.getElementById("btn-music").addEventListener("click", searchMusic);
@@ -2778,6 +2818,8 @@ updateFilterVisibility();
 
 async function runSearch() {
   const q = document.getElementById("search-q").value.trim();
+  await appMode.ready;
+  if (!appMode.server) { renderLibrary(q); return; } // offline: filter the bundled library
   if (!q) { elSearchStatus.textContent = "Type a song, artist, or dance name first."; return; }
   const source = elSearchSource.value;
   const params = new URLSearchParams({
@@ -2859,6 +2901,106 @@ document.getElementById("btn-load").addEventListener("click", () => {
     loadDance(parsed, isDefault ? DEFAULT_URL : null);
   }
 });
+
+// --- Static mode: server feature detection + the bundled dance library ----
+// The app runs two ways: behind server.py (search proxy, audio analysis,
+// transcripts) or as plain static files (GitHub Pages, python3 -m
+// http.server). One probe on load decides which; in static mode the
+// server-only UI paths turn into offline equivalents — the search card
+// becomes a browser for the bundled library.json, the music card takes a
+// pasted YouTube link with tap-tempo sync — and nothing ever fetches an
+// /api/ endpoint, so a static host shows a clean console.
+
+const appMode = { server: false, known: false, ready: null };
+appMode.ready = (async () => {
+  try {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 2500);
+    // relative on purpose so it works under a GitHub Pages project subpath.
+    // server.py answers {"mode":"server"}; the checked-in api/ping file
+    // (also shipped in the Pages artifact) answers {"mode":"static"} so the
+    // probe succeeds quietly on static hosts; any failure means static too.
+    const r = await fetch("api/ping", { signal: ctl.signal, cache: "no-store" });
+    clearTimeout(timer);
+    if (r.ok) appMode.server = (await r.json()).mode === "server";
+  } catch (e) { /* no server reachable */ }
+  appMode.known = true;
+  if (!appMode.server) enterStaticMode();
+})();
+
+function parseYouTubeId(q) {
+  const m = q.match(/(?:youtube\.com\/(?:watch\?(?:.*&)?v=|embed\/|shorts\/|live\/)|youtu\.be\/)([\w-]{11})/) ||
+            q.match(/^([\w-]{11})$/);
+  return m ? m[1] : null;
+}
+
+let library = null; // library.json's dances, once loaded (static mode only)
+
+function renderLibrary(filter) {
+  if (!library) return;
+  const q = (filter || "").trim().toLowerCase();
+  const hits = library.filter(d =>
+    !q || (d.title + " " + (d.level || "") + " " + (d.music || "")).toLowerCase().includes(q));
+  elSearchResults.innerHTML = "";
+  elSearchStatus.textContent = (q ? hits.length + " of " + library.length : library.length) +
+    " bundled dances — click one to load it.";
+  for (const d of hits) {
+    const div = document.createElement("div");
+    div.className = "result";
+    const sub = [];
+    if (d.counts) sub.push(d.counts + " count");
+    if (d.walls) sub.push(d.walls + (d.walls === 1 ? " wall" : " walls"));
+    if (d.level) sub.push(d.level);
+    if (d.music) sub.push(d.music);
+    div.innerHTML = '<div class="r-title"><b></b></div><div class="r-sub"></div>';
+    div.querySelector("b").textContent = d.title;
+    div.querySelector(".r-sub").textContent = sub.join(" · ");
+    div.addEventListener("click", () => {
+      // same path as a pasted sheet: the manifest carries the raw text
+      sheetInput.value = d.text;
+      const parsed = parseStepsheet(d.text);
+      showWarnings(parsed.warnings);
+      if (!parsed.ok) {
+        elSearchStatus.textContent = "Could not parse that sheet (see warnings below the paste box).";
+        return;
+      }
+      loadDance(parsed, d.url || null);
+      elSearchStatus.textContent = "Loaded “" + dance.title + "” from the bundled library.";
+    });
+    elSearchResults.appendChild(div);
+  }
+}
+
+async function enterStaticMode() {
+  // search card -> offline library browser (same result-row UI)
+  document.querySelector(".search h2").textContent = "Dance library";
+  document.querySelector(".search-row.filters").style.display = "none";
+  const note = document.createElement("div");
+  note.className = "mode-note";
+  note.textContent = "Offline mode: stepsheet search and automatic music matching need the " +
+    "local server (python3 server.py). Everything else works right here — browse the " +
+    "bundled dances below, paste any stepsheet, and sync music by pasting a YouTube " +
+    "link and tapping the tempo.";
+  document.querySelector(".search h2").after(note);
+  const sq = document.getElementById("search-q");
+  sq.placeholder = "Filter the bundled dances…";
+  document.getElementById("btn-search").textContent = "Filter";
+  sq.addEventListener("input", () => renderLibrary(sq.value));
+  // music card: /api/music, /api/audio and /api/transcript are absent
+  document.getElementById("btn-music-auto").style.display = "none";
+  document.getElementById("btn-cue").style.display = "none";
+  document.getElementById("music-q").placeholder = "Paste a YouTube link or video id…";
+  document.getElementById("btn-music").textContent = "Load video";
+  try {
+    const r = await fetch("library.json");
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    library = (await r.json()).dances;
+    renderLibrary(sq.value);
+  } catch (e) {
+    elSearchStatus.textContent = "Bundled library unavailable (" + e.message +
+      ") — paste a stepsheet below instead.";
+  }
+}
 
 // boot with the default dance, parsed from its raw stepsheet
 {
