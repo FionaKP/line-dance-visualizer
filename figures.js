@@ -550,7 +550,10 @@ function styleHipBumps(events, span) {
 // header: prose regex (a hint/label aid only — structure decides);
 // match: structural matcher; canon: loopable teaching sequence;
 // style: placement rewrite for tagged spans.
-const FIGURES = {
+// (named REGISTRY, not FIGURES: in the browser this file is a classic
+// script, and a top-level `const FIGURES` would shadow the window.FIGURES
+// API object for every other script on the page)
+const REGISTRY = {
   vine: {
     label: s => (s && s.meta && s.meta.rolling ? "Rolling vine " : "Vine ") + (s ? s.foot : "R"),
     header: /\b(grapevine|(?:rolling\s+)?vine|weave)\b/i,
@@ -808,7 +811,7 @@ function detectFigures(parsed) {
   while (i < st.length) {
     let hit = null;
     for (const id of PRIORITY) {
-      const m = FIGURES[id].match(st, i);
+      const m = REGISTRY[id].match(st, i);
       if (m) { hit = { id, m }; break; }
     }
     if (!hit) { i++; continue; }
@@ -821,7 +824,7 @@ function detectFigures(parsed) {
       idx: items.map(it => it.i),
       meta: hit.m.meta || {}
     };
-    span.label = FIGURES[hit.id].label(span);
+    span.label = REGISTRY[hit.id].label(span);
     spans.push(span);
     i += hit.m.len;
   }
@@ -837,7 +840,7 @@ function applyStyling(parsed) {
   if (parsed._figStyled) return parsed.figures;
   parsed._figStyled = true;
   for (const span of parsed.figures) {
-    const entry = FIGURES[span.figureId];
+    const entry = REGISTRY[span.figureId];
     if (entry.style) entry.style(parsed.events, span);
   }
   return parsed.figures;
@@ -876,7 +879,7 @@ function labelForLine(parsed, line) {
 
 // --- exports ---------------------------------------------------------------
 const API = {
-  FIGURES, detectFigures, applyStyling, separateFeet, classify,
+  FIGURES: REGISTRY, detectFigures, applyStyling, separateFeet, classify,
   labelForSection, labelForLine, SEP
 };
 
