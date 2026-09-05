@@ -482,6 +482,13 @@
           <rect rx="9" height="18" y="-13" fill="#1a140e" stroke="#c98f52" stroke-width="1.5"/>
           <text y="0" font-size="10" font-weight="700" fill="#c98f52" text-anchor="middle"></text>
         </g>
+        <!-- clap flash: a brief understated belt-height accent at the dancer,
+             gold so it never reads as a foot badge or the HOLD nothing -->
+        <g id="clapFx" opacity="0">
+          <path d="M-13,-6 L-19,-11 M-15,0 L-22,0 M-13,6 L-19,11" stroke="#e8c05a" stroke-width="2" stroke-linecap="round" fill="none"/>
+          <path d="M13,-6 L19,-11 M15,0 L22,0 M13,6 L19,11" stroke="#e8c05a" stroke-width="2" stroke-linecap="round" fill="none"/>
+          <text y="3.5" font-size="10" font-weight="700" fill="#e8c05a" text-anchor="middle" letter-spacing="1">CLAP</text>
+        </g>
         <g id="compass" transform="translate(464, 52)">
           <circle r="36" fill="#241c15" stroke="#3e3122" fill-opacity="0.85"/>
           <g id="compass-labels" font-size="9" fill="#a89a85" text-anchor="middle">
@@ -632,6 +639,7 @@
 </div>
 
 <script src="parser.js"></script>
+<script src="figures.js"></script>
 <script src="tempo.js"></script>
 <script src="boot3d.js"></script>
 <script>
@@ -769,12 +777,15 @@ let WALL_BEATS = 8, TOTAL_BEATS = 8;
 let kf = { L: [], R: [] };
 let thetaKF = [];
 let weightKF = [];
+let clapKF = [];              // global beats (all walls + seam) carrying a clap
+let clapBeatSet = new Set();  // wall-local integer beats with a clap (click track)
 
 // Which motion profile a step should use (see PROFILES below). The parser
 // doesn't export its KIND name, but badge + flags + the step text + how far
 // the foot travels identify the character of the move well enough.
 function stepProfile(ev, dist) {
   if (ev.impact) return "stomp";
+  if (ev.glide) return "glide"; // figure styling (vines): constant-velocity floor skim
   const b = ev.badge || "";
   if (b === "KICK" || b === "SCUFF") return "kick";
   if (b === "HOOK" || b === "KNEE") return "hook";
@@ -801,9 +812,19 @@ function lastPoseOf(arr) {
 }
 
 function buildTimeline(seed) {
+  // figure pass, once per dance: detect figures (tags cached on the dance
+  // object — motion, boots, and cues consume these and never re-detect) and
+  // rewrite tagged events to catalog placement BEFORE any keyframe geometry
+  // (so boots' placeFoot attitude/yaw pass reads the styled coordinates)
+  if (window.FIGURES) FIGURES.applyStyling(dance);
   kf = { L: [], R: [] };
   thetaKF = [];
   weightKF = [];
+  clapKF = [];
+  clapBeatSet = new Set();
+  for (const ev of dance.events) {
+    if (ev.clap) clapBeatSet.add(Math.round(ev.beat));
+  }
   const cont = !!seed; // continuing a previous pass rather than starting fresh
   let theta = cont ? seed.theta : 0;
   const feet = cont
@@ -836,19 +857,29 @@ function buildTimeline(seed) {
           kf[f].push({ t, x: curF.x, y: curF.y, a: theta, lifted: last.lifted, pose: last.pose, badge: null, prof: "pivot" });
         }
       }
+      if (ev.clap) clapKF.push({ t });
       if (ev.foot) {
         const cur = feet[ev.foot];
         const o = ev.self ? cur : feet[other(ev.foot)];
         const th = theta * Math.PI / 180;
-        const x = o.x + ev.dx * Math.cos(th) + ev.dy * Math.sin(th);
-        const y = o.y - ev.dx * Math.sin(th) + ev.dy * Math.cos(th);
+        let x = o.x + ev.dx * Math.cos(th) + ev.dy * Math.sin(th);
+        let y = o.y - ev.dx * Math.sin(th) + ev.dy * Math.cos(th);
+        // HARD RULE: boot keyframes never coincide — figures.js clamps every
+        // landing against the other foot (crosses stagger fore-aft, together
+        // counts keep 0.25-0.5u of daylight, grounded boots real clearance)
+        if (window.FIGURES && !ev.self) {
+          const sep = FIGURES.separateFeet({ x, y }, feet[other(ev.foot)], ev, theta);
+          x = sep.x; y = sep.y;
+        }
         const a = theta + (ev.aOff || 0);
         const dist = Math.hypot(x - cur.x, y - cur.y);
         feet[ev.foot] = { x, y, a };
-        kf[ev.foot].push({ t, x, y, a, lifted: !!ev.lifted, pose: ev.pose || "flat",
-                           badge: ev.badge || null, impact: !!ev.impact,
-                           dxo: ev.self ? undefined : ev.dx, dyo: ev.dy,
-                           prof: stepProfile(ev, dist) });
+        const k = { t, x, y, a, lifted: !!ev.lifted, pose: ev.pose || "flat",
+                    badge: ev.badge || null, impact: !!ev.impact,
+                    dxo: ev.self ? undefined : ev.dx, dyo: ev.dy,
+                    prof: stepProfile(ev, dist) };
+        if (ev.turnout !== undefined) k.turnout = ev.turnout; // figure meta -> boots yaw
+        kf[ev.foot].push(k);
         if (!ev.lifted && !ev.noWeight) weightKF.push({ t, foot: ev.foot });
       }
       if (ev.weight) weightKF.push({ t, foot: ev.weight });
@@ -1077,6 +1108,25 @@ function footState(foot, t) {
   }
   let lift = Math.max(Math.sin(Math.PI * s) * arcAmp, prevLift + (nextLift - prevLift) * s);
   if (P.snapLift) lift += P.snapLift * Math.sin(Math.PI * Math.pow(raw, 0.6));
+  {
+    // mid-path collision skim: a low traveling boot bows around the other
+    // boot's planted spot instead of sliding through it (behind-crosses,
+    // vine-turn transitions). Zero at both window ends — landings stay exact
+    // on the beat — and fades out entirely once the foot is clearly airborne.
+    const oArr = kf[foot === "L" ? "R" : "L"];
+    const ok2 = oArr[findIdx(oArr, t)];
+    const liftK = Math.max(0, 1 - lift / 0.3);
+    if (liftK > 0) {
+      const minD = 0.5 * liftK * Math.sin(Math.PI * raw);
+      const ddx = x - ok2.x, ddy = y - ok2.y;
+      const d = Math.hypot(ddx, ddy);
+      if (d > 1e-6 && d < minD) {
+        const push = minD - d;
+        x += ddx / d * push;
+        y += ddy / d * push;
+      }
+    }
+  }
   return {
     x, y,
     a: lerpAngle(prev.a, next.a, s),
@@ -1248,6 +1298,7 @@ const BOOT_COLORS = {
   R: { vamp: [128, 84, 44], shaft: [212, 158, 96], collar: [160, 114, 63],
        sole: [30, 22, 14], lining: [212, 174, 124], opening: [70, 48, 32], stitch: [248, 234, 206] }
 };
+const elClapFx = document.getElementById("clapFx");
 const elContactL = document.getElementById("contactL");
 const elContactR = document.getElementById("contactR");
 const elImpactL = document.getElementById("impactL");
@@ -1302,6 +1353,44 @@ const state = {
 };
 
 let audioCtx = null;
+
+// clap voice for the click track: a short filtered noise burst, clearly a
+// different instrument from the metronome tick. Deterministic noise so it
+// sounds identical every time.
+let clapBuf = null;
+function clapSound() {
+  if (!state.ticks || !audioCtx) return;
+  if (!clapBuf) {
+    const sr = audioCtx.sampleRate, n = Math.round(sr * 0.09);
+    clapBuf = audioCtx.createBuffer(1, n, sr);
+    const d = clapBuf.getChannelData(0);
+    let seed = 987654321;
+    for (let i = 0; i < n; i++) {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      d[i] = ((seed / 0x7fffffff) * 2 - 1) * Math.exp(-i / (0.014 * sr));
+    }
+  }
+  const src = audioCtx.createBufferSource();
+  src.buffer = clapBuf;
+  const bp = audioCtx.createBiquadFilter();
+  bp.type = "bandpass";
+  bp.frequency.value = 2300;
+  bp.Q.value = 0.8;
+  const gain = audioCtx.createGain();
+  gain.gain.setValueAtTime(0.6, audioCtx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.09);
+  src.connect(bp).connect(gain).connect(audioCtx.destination);
+  src.start();
+  src.stop(audioCtx.currentTime + 0.1);
+}
+
+// per-beat click: clap beats get the clap voice, everything else the tick
+function beatTick(beatInt) {
+  const local = ((beatInt % WALL_BEATS) + WALL_BEATS) % WALL_BEATS;
+  if (clapBeatSet.has(local)) clapSound();
+  else tick(beatInt % 8 === 0);
+}
+
 function tick(accent) {
   if (!state.ticks || !audioCtx) return;
   const osc = audioCtx.createOscillator();
@@ -1523,6 +1612,7 @@ function render() {
   placeFoot(footGlyphR, elShadowR, elContactR, elBootR, R);
   renderBadge("L", elBadgeL, L, t);
   renderBadge("R", elBadgeR, R, t);
+  renderClapFx(t, midX, midY);
 
   const w = weightAt(t);
   if (w !== glowAnim.foot || t < glowAnim.tAt) { glowAnim.foot = w; glowAnim.tAt = t; }
@@ -1694,6 +1784,25 @@ function renderBadge(foot, el, s, t) {
     rect.setAttribute("x", -w / 2);
   }
   text.setAttribute("y", 3.5);
+}
+
+// Clap flash: a short belt-height accent at the dancer on clap beats —
+// casual and immediately released (american-kids footage), nothing like the
+// HOLD treatment (which renders as stillness). Pure function of t, so
+// scrubs and sims reproduce it.
+function renderClapFx(t, midX, midY) {
+  if (!clapKF.length) { elClapFx.setAttribute("opacity", 0); return; }
+  const cur = clapKF[findIdx(clapKF, t)];
+  const age = t - cur.t;
+  if (age < 0 || age > 0.5) { elClapFx.setAttribute("opacity", 0); return; }
+  const p = age / 0.5;
+  const [cx, cy] = worldToScreen(midX, midY);
+  // waist height: above the boot shafts, below the badges
+  const up = 26 + 22 * curSinTilt;
+  const pop = 0.85 + 0.3 * Math.min(1, age / 0.08);   // quick pop out...
+  elClapFx.setAttribute("transform",
+    "translate(" + cx + "," + (cy - up - 6 * p) + ") scale(" + pop + ")");
+  elClapFx.setAttribute("opacity", 0.9 * (1 - p * p)); // ...released right away
 }
 
 // Dashed path from where a traveling step started to where it lands. Appears
@@ -1969,7 +2078,11 @@ function renderNow(t) {
   let stepTxt;
   if (warnCue) stepTxt = warnCue;                    // full verbosity, always
   else if (stage === 0) stepTxt = ev.txt;            // teach: full description
-  else if (stage === 1) stepTxt = labelForSection(secIdx); // label: terse handle
+  else if (stage === 1) {
+    stepTxt = labelForSection(secIdx);               // label: terse handle
+    // never echo the section header twice — the section line already shows it
+    if (stepTxt === sec.name) stepTxt = "";
+  }
   else stepTxt = inWindow ? nextLabel : "";          // counts: seam prompts only
   elNowStep.textContent = stepTxt;
   elNowStep.classList.toggle("warn", !!warnCue);
@@ -2228,7 +2341,7 @@ function frame() {
     const beatInt = Math.floor(tb);
     if (playing && beatInt !== state.lastBeatInt) {
       state.lastBeatInt = beatInt;
-      if (tb >= 0) tick(beatInt % 8 === 0);
+      if (tb >= 0) beatTick(beatInt);
     }
   } else if (state.playing) {
     state.t = anchorT + (performance.now() - anchorMs) / 1000 * state.bpm / 60;
@@ -2240,7 +2353,7 @@ function frame() {
     const beatInt = Math.floor(state.t);
     if (beatInt !== state.lastBeatInt) {
       state.lastBeatInt = beatInt;
-      tick(beatInt % 8 === 0);
+      beatTick(beatInt);
     }
   }
   render();
