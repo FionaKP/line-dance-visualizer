@@ -223,6 +223,10 @@
   #sheet-lines .line.sec-teach { opacity: 1; }
   #sheet-lines.stage-counts .line.sec-label .lbl { display: inline; }
   #sheet-lines.stage-counts .line.sec-label { opacity: 1; }
+  /* a run of lines sharing one figure label names it once, on the run's
+     first line; the rest keep their counts (visibility keeps row height) */
+  #sheet-lines.stage-label .line.lbl-rep .lbl,
+  #sheet-lines.stage-counts .line.sec-label.lbl-rep .lbl { visibility: hidden; }
   /* clicking a collapsed line reveals its full text in place */
   #sheet-lines .line.expanded .txt { display: inline; }
   #sheet-lines .line.expanded .lbl { display: none; }
@@ -285,6 +289,35 @@
   .result .r-title { font-size: 0.88rem; }
   .result .r-title b { color: var(--accent); font-weight: 600; }
   .result .r-sub { color: var(--muted); font-size: 0.76rem; margin-top: 2px; }
+  /* stepsheet result rows: level/count/wall as scannable chips, level
+     color-coded, so rows are tellable apart at a glance */
+  .result .r-tags { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-top: 4px; }
+  .chip {
+    display: inline-block;
+    padding: 1px 7px;
+    border-radius: 999px;
+    font-size: 0.68rem;
+    line-height: 1.5;
+    white-space: nowrap;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    color: var(--muted);
+  }
+  .chip.lvl { font-weight: 600; }
+  .chip.lvl-beginner { color: #8ecb7f; border-color: #3e5a33; background: rgba(142, 203, 127, 0.08); }
+  .chip.lvl-improver { color: var(--accent); border-color: #2c554f; background: rgba(79, 179, 169, 0.08); }
+  .chip.lvl-intermediate { color: var(--warn); border-color: #6b5527; background: rgba(240, 192, 90, 0.08); }
+  .chip.lvl-advanced { color: #e06a5a; border-color: #63302c; background: rgba(214, 69, 69, 0.10); }
+  .chip.src { border-style: dashed; }
+  .result .r-music {
+    color: var(--muted);
+    font-size: 0.72rem;
+    font-style: italic;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 
   .music { padding: 14px 16px; margin-top: 16px; }
   .music h2 { margin-bottom: 10px; }
@@ -1866,9 +1899,99 @@ function sectionIdxAt(localBeat) {
 }
 
 // Figure labels are owned by the figures.js detector when it is present
-// (section span -> figure label, e.g. "Vine R"); this shim degrades to the
-// section name so cues work without it. Never grow a move-name dictionary
-// here or in the parser — figures.js is the single label owner.
+// (window.FIGURES, section span -> figure label, e.g. "Vine R"). The local
+// fallback below covers the ubiquitous figures — vine, jazz box, shuffle,
+// rocking chair and friends — from the section's own text and events, so the
+// Label stage reads like an instructor's cue even without figures.js. Truly
+// unmatched sections fall back to a sentence-cased section name. The parser
+// gains no move-name knowledge: label logic lives here or in figures.js only.
+
+let figLabelCache = Object.create(null); // reset per dance in buildSheet
+
+function sentenceCase(s) {
+  s = (s || "").trim();
+  return s ? s[0].toUpperCase() + s.slice(1).toLowerCase() : s;
+}
+
+// first foot mentioned as a whole word ("right", "R", "left", "L"), or ""
+function footInText(s) {
+  const m = /\b(right|left|r|l)\b/i.exec(s);
+  return m ? m[1][0].toUpperCase() : "";
+}
+
+// "¼ turn" / "½ turn" / "¾ turn" when the text turns, else ""
+function turnSuffix(s) {
+  if (!/turn|pivot/i.test(s)) return "";
+  const frac = /1\s*\/\s*2|½|half/i.test(s) ? "½"
+             : /3\s*\/\s*4|¾/i.test(s) ? "¾"
+             : /1\s*\/\s*4|¼|quarter/i.test(s) ? "¼" : "";
+  return frac ? " " + frac + " turn" : "";
+}
+
+function detectSectionFigure(secIdx) {
+  const sec = dance.sections[secIdx];
+  if (!sec) return null;
+  const lines = dance.lines.filter(l => l.sec === secIdx);
+  const txts = lines.map(l => (l.text || "").toLowerCase());
+  const hay = (sec.name + " | " + txts.join(" | ")).toLowerCase();
+  const evs = dance.events.filter(e =>
+    e.beat >= sec.startBeat - 1e-6 && e.beat < sec.startBeat + sec.beats - 1e-6);
+  const dir = footInText(hay) || (evs.length ? evs[0].foot : "");
+  const withDir = base => (dir ? base + " " + dir : base);
+
+  // figures the sheet names outright (choreographers usually do)
+  if (/jazz\s*(box|square)/.test(hay)) return "Jazz box" + turnSuffix(hay);
+  if (/rocking\s*chair/.test(hay)) return "Rocking chair";
+  if (/kick[\s-]?ball[\s-]?change/.test(hay)) return "Kick ball change";
+  if (/coaster/.test(hay)) return withDir("Coaster");
+  if (/sailor/.test(hay)) return withDir("Sailor") + turnSuffix(hay);
+  if (/monterey/.test(hay)) return "Monterey" + turnSuffix(hay);
+  if (/charleston/.test(hay)) return "Charleston";
+  if (/hip\s*(bump|push|sway|roll)|bump\w*\s+hips?/.test(hay)) return "Hip bumps";
+  if (/toe\s*strut/.test(hay)) return "Toe struts";
+  if (/heel\s*(jack|split|switch)/.test(hay)) return "Heel switches";
+  if (/\bweave\b/.test(hay)) return withDir("Weave");
+  if (/grapevine|\bvine\b/.test(hay)) return withDir("Vine") + turnSuffix(hay);
+  if (/lock\s*step/.test(hay)) return "Lock step";
+  if (/scissor/.test(hay)) return "Scissors";
+  if (/shuffle|chass[eé]/.test(hay)) {
+    const way = /forward|fwd/.test(hay) ? "fwd" : /\bback(ward)?\b/.test(hay) ? "back" : dir;
+    return ("Shuffle" + (way ? " " + way : "")) + turnSuffix(hay);
+  }
+  if (/pivot/.test(hay)) return "Pivot" + (turnSuffix(hay) || " turn");
+
+  // unnamed but structurally obvious: side-behind-side = vine,
+  // cross-back-side = jazz box, rock/recover pairs = rocking chair
+  const side = i => /\bside\b|to the (left|right)/.test(txts[i] || "");
+  if (txts.length >= 3 && side(0) && /behind/.test(txts[1] || "") && side(2))
+    return withDir("Vine") + turnSuffix(hay);
+  if (/cross|over/.test(txts[0] || "") && /\bback\b/.test(txts[1] || "") && side(2))
+    return "Jazz box" + turnSuffix(hay);
+  if (/rock (forward|fwd)/.test(txts[0] || "") && /recover|rock back|back/.test(txts[1] || "") &&
+      /rock back|back/.test(txts[2] || "") && txts.length >= 4)
+    return "Rocking chair";
+  return null;
+}
+
+// per-line detection sticks to figures a single line can name (a "1&2
+// shuffle" line, a kick ball change); everything else defers to the section
+function detectLineFigure(line) {
+  const s = (line.text || "").toLowerCase();
+  const dir = footInText(s);
+  const withDir = base => (dir ? base + " " + dir : base);
+  if (/kick[\s-]?ball[\s-]?change/.test(s)) return "Kick ball change";
+  if (/jazz\s*(box|square)/.test(s)) return "Jazz box" + turnSuffix(s);
+  if (/rocking\s*chair/.test(s)) return "Rocking chair";
+  if (/coaster/.test(s)) return withDir("Coaster");
+  if (/sailor/.test(s)) return withDir("Sailor") + turnSuffix(s);
+  if (/shuffle|chass[eé]/.test(s)) {
+    const way = /forward|fwd/.test(s) ? "fwd" : /\bback(ward)?\b/.test(s) ? "back" : dir;
+    return ("Shuffle" + (way ? " " + way : "")) + turnSuffix(s);
+  }
+  if (/pivot/.test(s)) return "Pivot" + (turnSuffix(s) || " turn");
+  return null;
+}
+
 function labelForSection(secIdx) {
   const sec = dance.sections[secIdx];
   if (!sec) return "";
@@ -1884,8 +2007,13 @@ function labelForSection(secIdx) {
     }
     if (sec.figureLabel) return sec.figureLabel;
     if (sec.figure && sec.figure.label) return sec.figure.label;
+    const key = "s" + secIdx;
+    if (!(key in figLabelCache)) figLabelCache[key] = detectSectionFigure(secIdx);
+    if (figLabelCache[key]) return figLabelCache[key];
   } catch (e) { /* label API mismatch: fall back to the section name */ }
-  return sec.name;
+  // sentence-cased so the Label-stage step line reads as a cue, not a
+  // shouted repeat of the section header above it
+  return sentenceCase(sec.name);
 }
 
 function labelForLine(line) {
@@ -1896,6 +2024,9 @@ function labelForLine(line) {
       if (l) return l;
     }
     if (line.figureLabel) return line.figureLabel;
+    const key = "l" + line.sec + ":" + line.b0;
+    if (!(key in figLabelCache)) figLabelCache[key] = detectLineFigure(line);
+    if (figLabelCache[key]) return figLabelCache[key];
   } catch (e) { /* fall through */ }
   return labelForSection(line.sec);
 }
@@ -2011,6 +2142,7 @@ const elSheetLines = document.getElementById("sheet-lines");
 let lineEls = [];
 
 function buildSheet() {
+  figLabelCache = Object.create(null); // labels are per-dance
   document.getElementById("dance-title").textContent = dance.title;
   const bits = [];
   if (dance.meta.choreo) bits.push(dance.meta.choreo);
@@ -2026,6 +2158,7 @@ function buildSheet() {
   elSheetLines.innerHTML = "";
   lineEls = [];
   let lastSec = -1;
+  let lastLbl = null;
   for (const line of dance.lines) {
     if (line.sec !== lastSec) {
       const h = document.createElement("div");
@@ -2033,10 +2166,14 @@ function buildSheet() {
       h.textContent = dance.sections[line.sec].name;
       elSheetLines.appendChild(h);
       lastSec = line.sec;
+      lastLbl = null;
     }
     const div = document.createElement("div");
-    div.className = "line";
     const lbl = labelForLine(line);
+    // a run of lines sharing one figure label shows it once (on the first
+    // line of the run) at the Label stage — the rest keep just their counts
+    div.className = "line" + (lbl === lastLbl ? " lbl-rep" : "");
+    lastLbl = lbl;
     div.innerHTML = '<span class="counts">' + line.counts + '</span>' +
       '<span class="txt"></span><span class="lbl"></span>';
     div.querySelector(".txt").textContent = line.text;
@@ -2816,6 +2953,39 @@ function updateFilterVisibility() {
 elSearchSource.addEventListener("change", updateFilterVisibility);
 updateFilterVisibility();
 
+// One glance = one dance: level (color-coded), counts, walls and source
+// render as chips instead of a run-on subtitle line.
+function levelClass(level) {
+  const s = (level || "").toLowerCase();
+  if (/advanced/.test(s)) return "lvl-advanced";
+  if (/intermediate/.test(s)) return "lvl-intermediate";
+  if (/improver/.test(s)) return "lvl-improver";
+  if (/beginner|newcomer/.test(s)) return "lvl-beginner";
+  return "";
+}
+
+function resultTagsEl({ level, count, wall, source, music }) {
+  const row = document.createElement("div");
+  row.className = "r-tags";
+  const chip = (txt, cls) => {
+    const s = document.createElement("span");
+    s.className = "chip" + (cls ? " " + cls : "");
+    s.textContent = txt;
+    row.appendChild(s);
+  };
+  if (level) chip(level, "lvl " + levelClass(level));
+  if (count) chip(count + " ct");
+  if (wall) chip(wall + (String(wall) === "1" ? " wall" : " walls"));
+  if (source) chip(source, "src");
+  if (music) {
+    const m = document.createElement("span");
+    m.className = "r-music";
+    m.textContent = "♫ " + music;
+    row.appendChild(m);
+  }
+  return row;
+}
+
 async function runSearch() {
   const q = document.getElementById("search-q").value.trim();
   await appMode.ready;
@@ -2848,17 +3018,16 @@ async function runSearch() {
     for (const res of data.results) {
       const div = document.createElement("div");
       div.className = "result";
-      const sub = [];
-      if (source === "all" && res.source) sub.push(SOURCE_LABELS[res.source] || res.source);
-      if (res.count) sub.push(res.count + " count");
-      if (res.wall) sub.push(res.wall + " wall");
-      if (res.level) sub.push(res.level);
-      if (res.music) sub.push(res.music);
-      div.innerHTML = '<div class="r-title"><b></b> <span class="r-choreo"></span></div>' +
-                      '<div class="r-sub"></div>';
+      div.innerHTML = '<div class="r-title"><b></b> <span class="r-choreo"></span></div>';
       div.querySelector("b").textContent = res.title;
       div.querySelector(".r-choreo").textContent = res.choreo;
-      div.querySelector(".r-sub").textContent = sub.join(" · ");
+      div.appendChild(resultTagsEl({
+        level: res.level,
+        count: res.count,
+        wall: res.wall,
+        source: source === "all" && res.source ? (SOURCE_LABELS[res.source] || res.source) : null,
+        music: res.music
+      }));
       div.addEventListener("click", () => loadFromUrl(res.url, res.title));
       elSearchResults.appendChild(div);
     }
@@ -2947,14 +3116,11 @@ function renderLibrary(filter) {
   for (const d of hits) {
     const div = document.createElement("div");
     div.className = "result";
-    const sub = [];
-    if (d.counts) sub.push(d.counts + " count");
-    if (d.walls) sub.push(d.walls + (d.walls === 1 ? " wall" : " walls"));
-    if (d.level) sub.push(d.level);
-    if (d.music) sub.push(d.music);
-    div.innerHTML = '<div class="r-title"><b></b></div><div class="r-sub"></div>';
+    div.innerHTML = '<div class="r-title"><b></b></div>';
     div.querySelector("b").textContent = d.title;
-    div.querySelector(".r-sub").textContent = sub.join(" · ");
+    div.appendChild(resultTagsEl({
+      level: d.level, count: d.counts, wall: d.walls, music: d.music
+    }));
     div.addEventListener("click", () => {
       // same path as a pasted sheet: the manifest carries the raw text
       sheetInput.value = d.text;
