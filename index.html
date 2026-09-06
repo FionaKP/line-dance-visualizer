@@ -289,35 +289,25 @@
   .result .r-title { font-size: 0.88rem; }
   .result .r-title b { color: var(--accent); font-weight: 600; }
   .result .r-sub { color: var(--muted); font-size: 0.76rem; margin-top: 2px; }
-  /* stepsheet result rows: level/count/wall as scannable chips, level
-     color-coded, so rows are tellable apart at a glance */
-  .result .r-tags { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-top: 4px; }
+  /* chip row: count / walls / level / source at a glance, level color-coded */
+  .result .r-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; align-items: center; }
   .chip {
-    display: inline-block;
-    padding: 1px 7px;
-    border-radius: 999px;
     font-size: 0.68rem;
-    line-height: 1.5;
-    white-space: nowrap;
-    background: var(--panel-2);
+    line-height: 1;
+    padding: 3px 7px;
+    border-radius: 9px;
     border: 1px solid var(--border);
+    background: var(--panel-2);
     color: var(--muted);
-  }
-  .chip.lvl { font-weight: 600; }
-  .chip.lvl-beginner { color: #8ecb7f; border-color: #3e5a33; background: rgba(142, 203, 127, 0.08); }
-  .chip.lvl-improver { color: var(--accent); border-color: #2c554f; background: rgba(79, 179, 169, 0.08); }
-  .chip.lvl-intermediate { color: var(--warn); border-color: #6b5527; background: rgba(240, 192, 90, 0.08); }
-  .chip.lvl-advanced { color: #e06a5a; border-color: #63302c; background: rgba(214, 69, 69, 0.10); }
-  .chip.src { border-style: dashed; }
-  .result .r-music {
-    color: var(--muted);
-    font-size: 0.72rem;
-    font-style: italic;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
     white-space: nowrap;
   }
+  .chip.c-count { color: var(--text); font-variant-numeric: tabular-nums; }
+  .chip.lv { border-color: transparent; font-weight: 600; }
+  .chip.lv-beginner     { background: #23391f; color: #93cf7e; }
+  .chip.lv-improver     { background: #1f3a3c; color: #74c4ca; }
+  .chip.lv-intermediate { background: #443318; color: #dcaf60; }
+  .chip.lv-advanced     { background: #442020; color: #de8484; }
+  .chip.c-src { border-style: dashed; }
 
   .music { padding: 14px 16px; margin-top: 16px; }
   .music h2 { margin-bottom: 10px; }
@@ -3439,37 +3429,42 @@ function updateFilterVisibility() {
 elSearchSource.addEventListener("change", updateFilterVisibility);
 updateFilterVisibility();
 
-// One glance = one dance: level (color-coded), counts, walls and source
-// render as chips instead of a run-on subtitle line.
+// One row builder for every dance list (live search results and the bundled
+// library), so rows are tellable apart at a glance: title + choreographer,
+// then a chip row — count, walls, a level chip color-coded by difficulty,
+// the source site when results are mixed — with the song on its own line.
 function levelClass(level) {
-  const s = (level || "").toLowerCase();
-  if (/advanced/.test(s)) return "lvl-advanced";
-  if (/intermediate/.test(s)) return "lvl-intermediate";
-  if (/improver/.test(s)) return "lvl-improver";
-  if (/beginner|newcomer/.test(s)) return "lvl-beginner";
+  const l = (level || "").toLowerCase();
+  if (l.includes("advanced")) return "lv-advanced";
+  if (l.includes("intermediate")) return "lv-intermediate";
+  if (l.includes("improver")) return "lv-improver";
+  if (l.includes("beginner") || l.includes("newcomer")) return "lv-beginner";
   return "";
 }
 
-function resultTagsEl({ level, count, wall, source, music }) {
-  const row = document.createElement("div");
-  row.className = "r-tags";
-  const chip = (txt, cls) => {
+function resultRow(d) { // {title, choreo?, count?, wall?, level?, source?, music?}
+  const div = document.createElement("div");
+  div.className = "result";
+  div.innerHTML = '<div class="r-title"><b></b> <span class="r-choreo"></span></div>' +
+                  '<div class="r-chips"></div><div class="r-sub"></div>';
+  div.querySelector("b").textContent = d.title || "";
+  div.querySelector(".r-choreo").textContent = d.choreo || "";
+  const chips = div.querySelector(".r-chips");
+  const chip = (text, cls) => {
     const s = document.createElement("span");
     s.className = "chip" + (cls ? " " + cls : "");
-    s.textContent = txt;
-    row.appendChild(s);
+    s.textContent = text;
+    chips.appendChild(s);
   };
-  if (level) chip(level, "lvl " + levelClass(level));
-  if (count) chip(count + " ct");
-  if (wall) chip(wall + (String(wall) === "1" ? " wall" : " walls"));
-  if (source) chip(source, "src");
-  if (music) {
-    const m = document.createElement("span");
-    m.className = "r-music";
-    m.textContent = "♫ " + music;
-    row.appendChild(m);
-  }
-  return row;
+  if (d.count) chip(String(d.count).match(/count/i) ? d.count : d.count + " count", "c-count");
+  if (d.wall) chip(String(d.wall).match(/wall/i) ? d.wall
+                   : d.wall + (+d.wall === 1 ? " wall" : " walls"));
+  if (d.level) chip(d.level, "lv " + levelClass(d.level));
+  if (d.source) chip(d.source, "c-src");
+  if (!chips.childNodes.length) chips.remove();
+  if (d.music) div.querySelector(".r-sub").textContent = "♪ " + d.music;
+  else div.querySelector(".r-sub").remove();
+  return div;
 }
 
 async function runSearch() {
@@ -3502,18 +3497,15 @@ async function runSearch() {
     elSearchStatus.textContent = data.results.length + " result" + (data.results.length === 1 ? "" : "s") +
       (data.errors ? " — some sites failed: " + data.errors.join("; ") : "");
     for (const res of data.results) {
-      const div = document.createElement("div");
-      div.className = "result";
-      div.innerHTML = '<div class="r-title"><b></b> <span class="r-choreo"></span></div>';
-      div.querySelector("b").textContent = res.title;
-      div.querySelector(".r-choreo").textContent = res.choreo;
-      div.appendChild(resultTagsEl({
-        level: res.level,
+      const div = resultRow({
+        title: res.title,
+        choreo: res.choreo,
         count: res.count,
         wall: res.wall,
+        level: res.level,
         source: source === "all" && res.source ? (SOURCE_LABELS[res.source] || res.source) : null,
         music: res.music
-      }));
+      });
       div.addEventListener("click", () => loadFromUrl(res.url, res.title));
       elSearchResults.appendChild(div);
     }
@@ -3600,13 +3592,13 @@ function renderLibrary(filter) {
   elSearchStatus.textContent = (q ? hits.length + " of " + library.length : library.length) +
     " bundled dances — click one to load it.";
   for (const d of hits) {
-    const div = document.createElement("div");
-    div.className = "result";
-    div.innerHTML = '<div class="r-title"><b></b></div>';
-    div.querySelector("b").textContent = d.title;
-    div.appendChild(resultTagsEl({
-      level: d.level, count: d.counts, wall: d.walls, music: d.music
-    }));
+    const div = resultRow({
+      title: d.title,
+      count: d.counts,
+      wall: d.walls,
+      level: d.level,
+      music: d.music
+    });
     div.addEventListener("click", () => {
       // same path as a pasted sheet: the manifest carries the raw text
       sheetInput.value = d.text;
