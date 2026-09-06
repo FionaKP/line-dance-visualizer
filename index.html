@@ -848,13 +848,19 @@ function buildTimeline(seed) {
       if (turn) {
         theta += turn;
         thetaKF.push({ t, theta });
+        // heel grind: "weight on R heel making a ½ turn" — tag the grinding
+        // foot's swivel keyframe so footState rotates it about its HEEL
+        // anchor (attitude + drift only; the landing coordinates are exact)
+        const grindF = !ev.foot && ev.weight && Math.abs(turn) >= 85 &&
+                       /\bheel\b/i.test(ev.txt || "") ? ev.weight : null;
         // feet swivel with the body: pivot any foot that is not stepping now
         for (const f of ["L", "R"]) {
           if (f === ev.foot) continue;
           const curF = feet[f];
           const last = kf[f][kf[f].length - 1];
           feet[f] = { ...curF, a: theta };
-          kf[f].push({ t, x: curF.x, y: curF.y, a: theta, lifted: last.lifted, pose: last.pose, badge: null, prof: "pivot" });
+          kf[f].push({ t, x: curF.x, y: curF.y, a: theta, lifted: last.lifted, pose: last.pose, badge: null, prof: "pivot",
+                       grind: f === grindF || undefined });
         }
       }
       if (ev.clap) clapKF.push({ t });
@@ -974,8 +980,10 @@ function kfAttitude(k, foot) {
   const b = k.badge;
   if (b === "HOOK")  return { pitch: 35, roll: 14 * sgn, yawOff: -30 * sgn, bend: 0.5, anchor: null };
   if (b === "KNEE")  return { pitch: 48, roll: 0, yawOff: 0, bend: 0.5, anchor: null };
-  if (b === "KICK")  return { pitch: -32, roll: 0, yawOff: 0, bend: 0.8, anchor: null };
-  if (b === "SCUFF") return { pitch: -16, roll: 0, yawOff: 0, bend: 0.8, anchor: null };
+  // kick/scuff pitch scales gently with the wall repeat (amplitude
+  // escalation: same counts danced bigger each pass, timing untouched)
+  if (b === "KICK")  return { pitch: -32 * kfIntensity(k), roll: 0, yawOff: 0, bend: 0.8, anchor: null };
+  if (b === "SCUFF") return { pitch: -16 * kfIntensity(k), roll: 0, yawOff: 0, bend: 0.8, anchor: null };
   if (b === "SWEEP") return { pitch: 30, roll: -8 * sgn, yawOff: 0, bend: 0.6, anchor: null };
   // locked boot tucks on the ball, heel popped high (amame ~40-45, springy
   // ankle-cross locks in ten-thirty-five); toe anchored so the ball stays down
@@ -1033,6 +1041,168 @@ function settledAttitude(k, foot) {
 function grooveHash(seed, salt) {
   const x = Math.sin(seed * 12.9898 + salt * 78.233) * 43758.5453;
   return x - Math.floor(x);
+}
+
+// ---------------------------------------------------------------------------
+// Body styling layer: cosmetic hip/hold/meter texture. Everything here is a
+// pure function of t over the parsed events, and render() applies the results
+// AFTER the camera has consumed the raw foot states — keyframe anchor
+// coordinates, landings, timing and the camera's settled/stillness logic are
+// never touched (seek/sim safe, dead-still camera over bump blocks).
+// ---------------------------------------------------------------------------
+const STYLE = {
+  waltz: false,       // 3-count bars: per-bar rise/fall + releve on counts 2-3
+  holdShimmer: false, // funk/pop sheets keep a body pulse through holds;
+                      // country holds freeze dead (genre sniffed from the sheet)
+  pulses: [],         // {b, dx, dy, dur} hip pushes: wall-local beat, dancer frame
+  holds: []           // {b0, b1} pure-hold spans (freeze the groove dip)
+};
+
+// 3/4 time: most counted lines span exactly three beats ("1-3", "4-6") and
+// the wall length divides by 3 (twinkle-toes-waltz; every 4/4 corpus sheet
+// stays untouched by this test)
+function detectWaltz(d) {
+  if (!d.lines || !d.lines.length || d.wallBeats % 3 !== 0) return false;
+  let three = 0;
+  for (const ln of d.lines) if (Math.abs(ln.b1 - ln.b0 - 2) < 1e-6) three++;
+  return three >= d.lines.length * 0.6;
+}
+
+function buildStyling() {
+  STYLE.waltz = detectWaltz(dance);
+  const sheetTxt = [dance.title || "", (dance.meta && dance.meta.music) || "",
+                    (dance.sections || []).map(s => s.name || "").join(" ")].join(" ");
+  STYLE.holdShimmer = /\b(funk|funky|pop|shake|swag|hip.?hop)\b/i.test(sheetTxt);
+  STYLE.pulses = [];
+  STYLE.holds = [];
+  const evs = dance.events;
+  const bumpAt = [];
+  for (const ev of evs) {
+    if (ev.foot || ev.weight || ev.turn) continue;
+    const txt = ev.txt || "";
+    if (/\b(bump|hip)s?\b/i.test(txt)) {
+      // lateral hip bump: the paired stance pushes toward the named side,
+      // one distinct push (with recoil) per counted bump
+      const side = /\bleft\b/i.test(txt) ? -1 : 1;
+      STYLE.pulses.push({ b: ev.beat, dx: 0.13 * side, dy: 0, dur: 1 });
+      bumpAt.push(ev.beat);
+    } else {
+      STYLE.holds.push({ b0: ev.beat, b1: ev.beat + 1 });
+    }
+  }
+  // rocking-chair / fore-aft rock hip pushes: hips lean into each rock and
+  // recover the other way — one push per count. Rocks that share their count
+  // with an explicit hip bump (tush-push 13-16) defer to the lateral bump.
+  for (let i = 0; i < evs.length; i++) {
+    const ev = evs[i];
+    if (!ev.foot || ev.lifted || !/\brock\b/i.test(ev.txt || "") ||
+        Math.abs(ev.dy || 0) < 0.5) continue;
+    if (bumpAt.some(b => Math.abs(b - ev.beat) < 0.26)) continue;
+    const sgn = Math.sign(ev.dy);
+    STYLE.pulses.push({ b: ev.beat, dx: 0, dy: 0.1 * sgn, dur: 1 });
+    // a weight-only recover that follows pushes back the other way
+    for (let j = i + 1; j < evs.length; j++) {
+      const rv = evs[j];
+      if (rv.beat - ev.beat > 1.55 || rv.foot) break;
+      if (rv.beat > ev.beat + 1e-6 && rv.weight &&
+          /\b(recover|rock)\b/i.test(rv.txt || "")) {
+        STYLE.pulses.push({ b: rv.beat, dx: 0, dy: -0.1 * sgn, dur: 1 });
+        break;
+      }
+    }
+  }
+  STYLE.pulses.sort((a, b) => a.b - b.b);
+  // syncopated runs (1&2 triples) compress timing, not reach: each push only
+  // lasts until the next one starts
+  for (let i = 0; i < STYLE.pulses.length; i++) {
+    const gap = i + 1 < STYLE.pulses.length ? STYLE.pulses[i + 1].b - STYLE.pulses[i].b : 1;
+    STYLE.pulses[i].dur = Math.max(0.4, Math.min(1, gap));
+  }
+  // a hold span runs until the next real motion (long holds freeze longer)
+  for (const h of STYLE.holds) {
+    const nxt = evs.find(e => e.beat > h.b0 + 1e-6 && (e.foot || e.turn));
+    if (nxt) h.b1 = Math.max(h.b1, nxt.beat);
+  }
+}
+
+// Wall-repeat escalation: the same counts danced a touch bigger on each
+// repeat (catalog rule 6: level scales amplitude, never placements/timing).
+// Scales only cosmetic amplitudes — bump offsets, kick pitch, groove dip.
+function stylingIntensity(t) {
+  if (!state.groove) return 1;
+  return 1 + 0.1 * Math.min(3, Math.floor(Math.max(0, t) / WALL_BEATS));
+}
+function kfIntensity(k) {
+  return !state.groove || k.t === undefined ? 1
+    : 1 + 0.1 * Math.min(3, Math.floor(Math.max(0, k.t) / WALL_BEATS));
+}
+
+// summed hip-push offset at t, in the dancer's frame. Each push is its own
+// rise-and-recoil (sine window peaking on its count) so double bumps read as
+// two distinct pushes, never one held lean.
+function hipPulseAt(t) {
+  let dx = 0, dy = 0;
+  if (STYLE.pulses.length) {
+    const local = ((t % WALL_BEATS) + WALL_BEATS) % WALL_BEATS;
+    for (const p of STYLE.pulses) {
+      for (const b of [p.b, p.b - WALL_BEATS, p.b + WALL_BEATS]) {
+        const u = (local - (b - 0.35 * p.dur)) / p.dur;
+        if (u > 0 && u < 1) {
+          const env = Math.sin(Math.PI * u);
+          dx += p.dx * env;
+          dy += p.dy * env;
+        }
+      }
+    }
+  }
+  return { dx, dy };
+}
+
+// 1 = the groove dip runs; eases to 0 just after a pure hold's count so
+// holds freeze dead (the footage law: motion / dead stop is the contrast).
+// Waltz bars keep their body wave — a waltz hold is part of the wave.
+function holdGateAt(t) {
+  if (!STYLE.holds.length || STYLE.waltz) return 1;
+  const local = ((t % WALL_BEATS) + WALL_BEATS) % WALL_BEATS;
+  for (const h of STYLE.holds) {
+    if (local >= h.b0 - 1e-6 && local < h.b1 - 1e-6) {
+      return 1 - ease(Math.min(1, (local - h.b0) / 0.4));
+    }
+  }
+  return 1;
+}
+
+// mid-whip open stance: an isolated fast half-pivot keeps its fore-aft
+// stride split and passes through a visibly wide straddle instant before
+// settling (american-kids ~2x shoulder width mid-pivot). Returns the 0..1
+// widen envelope over the same window thetaAt's fast-middle profile uses.
+function pivotStraddleAt(t) {
+  const i = findIdx(thetaKF, t);
+  const prev = thetaKF[i], next = thetaKF[i + 1];
+  if (!next) return 0;
+  const gap = Math.max(next.t - prev.t, 1e-6);
+  const dTh = next.theta - prev.theta;
+  const chainPrev = i >= 1 && gap <= CHAIN_GAP;
+  const chainNext = !!thetaKF[i + 2] && (thetaKF[i + 2].t - next.t) <= CHAIN_GAP;
+  if (chainPrev || chainNext || Math.abs(dTh) < 135) return 0;
+  // heel grinds rotate about the planted heel, never through a straddle
+  for (const f of ["L", "R"]) {
+    const nk = kf[f][findIdx(kf[f], t) + 1];
+    if (nk && nk.grind) return 0;
+  }
+  const win = Math.min(1.0, gap * 0.9);
+  if (t < next.t - win) return 0;
+  const r = Math.min(1, (t - (next.t - win)) / win);
+  return Math.sin(Math.PI * r);
+}
+
+// waltz releve: both heels ease up through counts 2-3 of each 3-count bar
+// and set down into the next bar's count 1
+function waltzReleveAt(t) {
+  const p = ((t % 3) + 3) % 3;
+  const up = ease(Math.max(0, Math.min(1, (p - 0.85) / 0.5)));
+  const down = ease(Math.max(0, Math.min(1, (p - 2.6) / 0.4)));
+  return up * (1 - down);
 }
 
 function footState(foot, t) {
@@ -1106,6 +1276,21 @@ function footState(foot, t) {
       y += (dxT / d) * bs;
     }
   }
+  // heel grind: the grinding boot rotates about its planted HEEL corner
+  // through the sweep (mirror of the toe-anchor mechanics) — the boot center
+  // drifts out along the heel-anchored arc and re-places under the body as
+  // it rotates (spicy-margarita: never a turn on a dime). The envelope is
+  // zero at both ends so the landing still evaluates exactly to its keyframe.
+  if (next.grind) {
+    const hb = 0.35; // floor units from boot center back to the heel corner
+    const a0 = prev.a * Math.PI / 180;
+    const ath = lerpAngle(prev.a, next.a, s) * Math.PI / 180;
+    const env = Math.sin(Math.PI * raw);
+    const gx = prev.x - hb * Math.sin(a0) + hb * Math.sin(ath);
+    const gy = prev.y - hb * Math.cos(a0) + hb * Math.cos(ath);
+    x += (gx - x) * env;
+    y += (gy - y) * env;
+  }
   let lift = Math.max(Math.sin(Math.PI * s) * arcAmp, prevLift + (nextLift - prevLift) * s);
   if (P.snapLift) lift += P.snapLift * Math.sin(Math.PI * Math.pow(raw, 0.6));
   {
@@ -1142,6 +1327,13 @@ function footState(foot, t) {
 // blended attitude for a foot mid-window, plus per-move flourishes that only
 // exist while the foot travels (zero at both ends, so landings never snap)
 function moveAttitude(prev, next, foot, s, raw) {
+  // heel grind: rocked back on the planted heel through the whole sweep, the
+  // trailing toe skimming a low arc; dead flat again exactly at the landing
+  if (next.grind) {
+    const env = Math.sin(Math.PI * raw);
+    return { pitch: -20 * env, roll: 0, yawOff: 0, bend: 1 - 0.35 * env,
+             anchor: "heel", anchorW: env };
+  }
   let att = blendAttitude(kfAttitude(prev, foot), kfAttitude(next, foot), s);
   if (att && next.badge === "SWEEP") {
     // the sweeping toe fans outward through the arc and settles back
@@ -1596,11 +1788,63 @@ function render() {
   // Purely vertical and cosmetic (landings and floor coordinates untouched),
   // gated behind the Groove toggle and the 3D tilt like all boot work.
   if (state.groove) {
-    const phase = ((t % 1) + 1) % 1;
     const gate = Math.min(1, curSinTilt / 0.35);
-    groovePulsePx = 2 * (0.5 + 0.5 * Math.cos(2 * Math.PI * phase)) * gate;
+    if (STYLE.waltz) {
+      // 3/4 time: one smooth rise-and-fall per 3-count bar — down into
+      // count 1, rising through 2-3 with the releve. Never a per-count
+      // bounce (that reads as 4/4 bopping over a waltz).
+      const p = ((t % 3) + 3) % 3;
+      groovePulsePx = 3 * (0.5 + 0.5 * Math.cos(2 * Math.PI * p / 3)) * gate *
+                      stylingIntensity(t);
+    } else {
+      const phase = ((t % 1) + 1) % 1;
+      groovePulsePx = 2 * (0.5 + 0.5 * Math.cos(2 * Math.PI * phase)) * gate *
+                      holdGateAt(t) * stylingIntensity(t);
+    }
   } else {
     groovePulsePx = 0;
+  }
+
+  // --- body styling layer (render-only): hip pushes, pivot straddle, waltz
+  // releve. Applied AFTER the camera math consumed the raw L/R states, so
+  // the camera and its settled/stillness gates never see these cosmetic
+  // offsets; tilt-gated like the boots so the 2D view stays bit-identical.
+  const styleGate = Math.min(1, curSinTilt / 0.35);
+  if (styleGate > 0.01) {
+    const inten = stylingIntensity(t);
+    const hp = hipPulseAt(t);
+    if (hp.dx || hp.dy) {
+      // dancer-frame push rotated into the world by the current facing
+      const thr = theta * Math.PI / 180;
+      const wx = (hp.dx * Math.cos(thr) + hp.dy * Math.sin(thr)) * styleGate * inten;
+      const wy = (-hp.dx * Math.sin(thr) + hp.dy * Math.cos(thr)) * styleGate * inten;
+      L.x += wx; L.y += wy;
+      R.x += wx; R.y += wy;
+    }
+    const straddle = pivotStraddleAt(t) * 0.28 * styleGate;
+    if (straddle) {
+      // widen the stance about its own midpoint (midpoint unchanged, so the
+      // camera path is identical) — the mid-whip open-stance moment
+      const k = 1 + straddle;
+      L.x = midX + (L.x - midX) * k; L.y = midY + (L.y - midY) * k;
+      R.x = midX + (R.x - midX) * k; R.y = midY + (R.y - midY) * k;
+    }
+    if (STYLE.waltz && state.groove) {
+      const rel = waltzReleveAt(t) * styleGate;
+      if (rel > 0.01) for (const s of [L, R]) {
+        // releve: settled flat boots ease both heels up, toe anchored;
+        // real move attitudes (points, turns) always win
+        if (!s.lift && s.pose === "flat") {
+          const a = s.att;
+          if (!a) s.att = { pitch: 15 * rel, roll: 0, yawOff: 0,
+                            bend: 1 - 0.35 * rel, anchor: "toe", anchorW: rel };
+          else if (!a.pitch && !a.anchor) {
+            a.pitch = 15 * rel; a.bend = 1 - 0.35 * rel;
+            a.anchor = "toe"; a.anchorW = rel;
+          }
+        }
+      }
+    }
   }
 
   renderTrail("L", elTrailL, elDotL, t);
@@ -1623,15 +1867,27 @@ function render() {
   // the glow dips with the groove pulse: convert the screen-space dip into
   // the world layer's pre-transform frame (undo the tilt squish + rotation)
   let gcx = wf.x * SCALE, gcy = -wf.y * SCALE;
-  if (groovePulsePx) {
-    const dip = groovePulsePx / Math.max(0.25, curTiltK);
+  // funk/pop hold shimmer: the feet stop but the body doesn't — the weight
+  // glow keeps a subtle breathe through long holds (boots stay frozen;
+  // country sheets skip this and hold dead still). Deterministic in t.
+  let glowDip = groovePulsePx, glowOp = 0.3 + 0.7 * settle;
+  if (STYLE.holdShimmer && state.groove && curSinTilt > 0.03) {
+    const hd = 1 - holdGateAt(t);
+    if (hd > 0.01) {
+      const wob = 0.5 + 0.5 * Math.sin(4 * Math.PI * t);
+      glowDip += 1.2 * hd * wob;
+      glowOp -= 0.08 * hd * wob;
+    }
+  }
+  if (glowDip) {
+    const dip = glowDip / Math.max(0.25, curTiltK);
     const rr = curRot * Math.PI / 180;
     gcx += dip * Math.sin(rr);
     gcy += dip * Math.cos(rr);
   }
   elGlow.setAttribute("cx", gcx);
   elGlow.setAttribute("cy", gcy);
-  elGlow.setAttribute("opacity", 0.3 + 0.7 * settle);
+  elGlow.setAttribute("opacity", glowOp);
 
   const dialRot = curRot;
   elCompassLabels.setAttribute("transform", "rotate(" + dialRot + ")");
@@ -2217,6 +2473,7 @@ function loadDance(parsed, url) {
   WALL_BEATS = dance.wallBeats;
   TOTAL_BEATS = WALL_BEATS * dance.walls;
   buildTimeline();
+  buildStyling();
   buildProgress();
   cue.bumpSec = null;
   cue.teachPins.clear();
