@@ -78,6 +78,35 @@ attitude work in kfAttitude/poseLift/PROFILES + the placeFoot boot block.
   also layers onto yaw-only attitudes so a crossed free boot still peels.
   Cold seek to tush-push 9.6: free R boot popped in a single-shot still.
 
+## Round 2, pass 2 (style2-boots-r2)
+
+- Heel grind: a grind ("weight on R heel making a 1/2 turn") parses as a bare
+  turn + weight event, so the grinding foot's keyframe is a plain
+  swivel-with-body pivot (badge null, pose flat) and round 1 left it att:null
+  through the whole turn. isGrindKF() recovers the grind from the source event
+  at the keyframe's local beat (ev.turn && ev.weight === foot && /heel/ in the
+  text); kfAttitude then digs the heel: pitch -18, heel-anchored, bend 0.6.
+  The dig develops through the rotation window, holds while the grind
+  keyframe is current, and eases out through the next move's window.
+  ten-thirty-five S1 count 7: R rotates 0->180 with the heel anchor at
+  w=0.88 mid-turn and -18/w=1.00 held at t=6.3/6.7 (the round-2 assessment's
+  failing probe times); eases to the count-1 rock by 7.8. Attitude only —
+  pivot keyframe position/heading untouched.
+- Held points/taps whip in late: easing a point into an &-together uses the
+  drag profile (win 2), so the reset window spans nearly the whole half-beat
+  gap and round 1's stills at x.4 read mid-fade (ten-thirty-five 49.4
+  measured pitch 47). moveAttitude now holds the attitude until raw 0.75 and
+  whips flat over the last quarter (position/lift keep the normal ease, so
+  landings stay on the beat). 49.4 now measures pitch 67 toe-anchored;
+  twinkle-toes points hold 68.
+- Kick apex capped: arc 0.5 -> 0.35, snapLift 0.15 -> 0.08 (apex 0.64 ->
+  0.42, barely above the 0.35 hold — a knee-flick, not a hop). Kick pitch
+  -32 unchanged. kill-the-spiders flight apex 0.42, held 0.35.
+- Re-verified round-1 acceptance on this branch (headless stills +
+  footState().att numerics): tush-push heel touches -22 heel-anchored,
+  &-closes 44 toe-anchored; amame/canadian-stomp crosses yaw +/-30;
+  cha-cha-cha beside-point 68 with -12 pigeon yaw.
+
 Verification: screenshots via a background browser tab on the live app
 (viewBox pinned to '150 110 220 200' for close-ups), state driven manually
 with setSynced(false)/seek/render x2, numerics via footState().att. NOTE:

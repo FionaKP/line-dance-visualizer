@@ -946,7 +946,7 @@ const PROFILES = {
   drag:  { win: 2,    arc: 0.1,  pos: r => ease(Math.max(0, (r - 0.15) / 0.85)) }, // closes own their whole gap: one long floor-contact slide
   glide: { win: 2,    arc: 0.1,  pos: r => 0.5 - 0.5 * Math.cos(Math.PI * r) },    // skates/drags/slides: one steady leather-on-wood glide over the whole gap
   rock:  { arc: 0.45, pos: r => backOut(ease(r), 1.2) },                  // lean past the spot, rebound onto it
-  kick:  { win: 0.9,  arc: 0.5, snapLift: 0.15, pos: r => 1 - Math.pow(1 - r, 3) },  // snap out fast but LOW: a knee-flick, out-and-back under shin height
+  kick:  { win: 0.9,  arc: 0.35, snapLift: 0.08, pos: r => 1 - Math.pow(1 - r, 3) },  // snap out fast but LOW: a knee-flick, out-and-back under shin height (apex capped ~0.43, barely above the 0.35 hold)
   hook:  { win: 0.85, arc: 0.5, pos: r => 1 - Math.pow(1 - r, 2) },       // quick tight tuck
   sweep: { win: 2.2,  arc: 0.2,  pos: r => 0.5 - 0.5 * Math.cos(Math.PI * r) },    // low compass arc: toe-down, full-count, floor-level (bow added in footState)
   place: { win: 1.1,  arc: 0.6 },                                        // touches/points set down gently
@@ -961,6 +961,22 @@ const PROFILES = {
 // floor ("toe" tip, "heel" corner); airborne moves rotate about the ankle.
 // Only the 3D boot consumes this — the 2D glyph language is untouched.
 // ---------------------------------------------------------------------------
+// Heel-grind detection: a grind ("weight on R heel making a 1/2 turn") parses
+// as a bare turn + weight event, so the grinding foot's keyframe is a plain
+// swivel-with-body pivot (badge null, pose flat). Recover the grind from the
+// source event at this keyframe's local beat: a turn whose weight lands on
+// this foot and whose text names the heel. Attitude only — the pivot
+// keyframe's position/heading are untouched.
+function isGrindKF(k, foot) {
+  if (k.prof !== "pivot" || !(k.t >= 0) || !dance) return false;
+  const lb = ((k.t % WALL_BEATS) + WALL_BEATS) % WALL_BEATS;
+  for (const ev of dance.events) {
+    if (ev.turn && ev.weight === foot && Math.abs(ev.beat - lb) < 0.01 &&
+        /\bheel\b/i.test(ev.txt || "")) return true;
+  }
+  return false;
+}
+
 function kfAttitude(k, foot) {
   if (!k) return null;
   const sgn = foot === "R" ? 1 : -1; // mirror side-dependent moves
@@ -988,6 +1004,12 @@ function kfAttitude(k, foot) {
   // locked boot tucks on the ball, heel popped high (amame ~40-45, springy
   // ankle-cross locks in ten-thirty-five); toe anchored so the ball stays down
   if (b === "LOCK")  return { pitch: 35, roll: 0, yawOff: 0, bend: 0.4, anchor: "toe" };
+  // heel grind: the weighted foot digs its heel and rotates about the HEEL
+  // anchor through the turn, toe up ~18 and skimming low (ten-thirty-five
+  // S1 count 7). The dig holds while the grind keyframe is current and
+  // eases out through the next move's window.
+  if (k.prof === "pivot" && isGrindKF(k, foot))
+    return { pitch: -18, roll: 0, yawOff: 0, bend: 0.6, anchor: "heel" };
   // weighted flat landings, shaped by where they land in the dancer's frame
   // (dxo/dyo carried on step keyframes). Attitude only — position untouched.
   if (!k.lifted && !k.impact && k.pose === "flat" && k.dxo !== undefined && k.t !== undefined) {
@@ -1327,14 +1349,19 @@ function footState(foot, t) {
 // blended attitude for a foot mid-window, plus per-move flourishes that only
 // exist while the foot travels (zero at both ends, so landings never snap)
 function moveAttitude(prev, next, foot, s, raw) {
-  // heel grind: rocked back on the planted heel through the whole sweep, the
-  // trailing toe skimming a low arc; dead flat again exactly at the landing
-  if (next.grind) {
-    const env = Math.sin(Math.PI * raw);
-    return { pitch: -20 * env, roll: 0, yawOff: 0, bend: 1 - 0.35 * env,
-             anchor: "heel", anchorW: env };
-  }
-  let att = blendAttitude(kfAttitude(prev, foot), kfAttitude(next, foot), s);
+  // held points/taps/heel digs keep their steep attitude late into the
+  // reset: the boot stays anchored well past mid-window and whips flat only
+  // at the very end (a point before an &-together holds until the last
+  // instant — ten-thirty-five side points still read steep at x.4 stills).
+  // Attitude only: position/lift keep the normal ease so landings stay
+  // exactly on their beat.
+  // (Heel-grind attitude lives in kfAttitude via isGrindKF — the dig holds
+  // through the turn and eases out into the next move; the grind keyframe
+  // flag still drives the heel-arc position drift in footState.)
+  let sAtt = s;
+  if (prev.lifted && (prev.pose === "toe" || prev.pose === "heel") && !next.lifted)
+    sAtt = ease(Math.max(0, (raw - 0.75) / 0.25));
+  let att = blendAttitude(kfAttitude(prev, foot), kfAttitude(next, foot), sAtt);
   if (att && next.badge === "SWEEP") {
     // the sweeping toe fans outward through the arc and settles back
     att.yawOff += (foot === "R" ? 22 : -22) * Math.sin(Math.PI * raw);
