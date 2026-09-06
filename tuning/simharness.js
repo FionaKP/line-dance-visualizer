@@ -18,7 +18,7 @@ window.__angDiff = (a, b) => {
   return d;
 };
 
-window.__sim = function (fromBeat, beats, warm = 4) {
+window.__sim = function (fromBeat, beats, warm = 4, fps = 60) {
   const origNow = performance.now;
   let fake = origNow.call(performance);
   performance.now = () => fake;
@@ -26,24 +26,43 @@ window.__sim = function (fromBeat, beats, warm = 4) {
     state.playing = false;
     lastFrameMs = null;
     seek(fromBeat - warm);
+    // seek() resets every camera state EXCEPT the azimuth/tilt eases (a scrub
+    // keeping its side angle is a UX feature). For run-to-run reproducibility
+    // pin them here: azimDead otherwise parks a <1.5 deg leftover from the
+    // previous sim forever, and back-to-back A/B runs inherit each other's
+    // side angle.
+    state.azim = state.view3d ? VIEW3D.azimBase : 0;
+    state.effTilt = state.view3d ? VIEW3D.tilt : 0;
     lastFrameMs = null;
-    const bps = state.bpm / 60, stepB = bps / 60;
+    const bps = state.bpm / 60, stepB = bps / fps;
     const totalF = Math.round((warm + beats) / stepB);
     const warmF = Math.round(warm / stepB);
     __viewStats.reset();
     const trace = [];
     for (let i = 0; i < totalF; i++) {
-      fake += 1000 / 60;
+      fake += 1000 / fps;
       state.t = fromBeat - warm + (i + 1) * stepB;
       render();
       if (i === warmF - 1) __viewStats.reset();
-      if (i >= warmF) trace.push({ t: state.t, th: thetaAt(state.t), vt: state.viewTheta, az: state.azim });
+      if (i >= warmF) trace.push({ t: state.t, th: thetaAt(state.t), vt: state.viewTheta,
+                                   az: state.azim, cx: state.cam.x, cy: state.cam.y });
     }
     window.__lastTrace = trace;
     return { stats: __viewStats.read(), analysis: __analyze(trace) };
   } finally {
     performance.now = origNow;
   }
+};
+
+// Camera drift over a trace: the diagonal of the bounding box the camera
+// position visits (floor units). "Dead still" holds should read ~0.
+window.__camDrift = function (trace) {
+  let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+  for (const p of trace) {
+    x0 = Math.min(x0, p.cx); x1 = Math.max(x1, p.cx);
+    y0 = Math.min(y0, p.cy); y1 = Math.max(y1, p.cy);
+  }
+  return +Math.hypot(x1 - x0, y1 - y0).toFixed(3);
 };
 
 // Per-turn metrics from a trace: for each facing change > 15 deg, the max
@@ -94,6 +113,35 @@ window.__ab = function (overrides, segs) {
   });
   Object.assign(VIEW3D, saved);
   return out;
+};
+
+// PRECEDENCE guard (see the camera input contract above render() in
+// index.html): render-layer cosmetics — hip bumps, hold textures, thud,
+// heel pops — must not feed the camera's foot-position inputs. This sims a
+// segment with every detectable cosmetic knob zeroed and asserts the camera
+// trace (cam x/y, viewTheta, azim) is bit-identical to the normal run. Any
+// knob the motion workstream adds under one of the names below is picked up
+// automatically; add new cosmetic knob names here, never camera exceptions.
+// Usage: __loadCorpusSheet('tush-push') then __camPrecedence(12, 8).
+window.__camPrecedence = function (fromBeat, beats, warm = 4) {
+  const COSMETIC_KNOBS = ["thudPx", "bumpPx", "bumpU", "hipBumpU", "holdTexPx", "swayPx"];
+  const run = () => { __sim(fromBeat, beats, warm); return __lastTrace.map(p => [p.cx, p.cy, p.vt, p.az]); };
+  const base = run();
+  const saved = {};
+  const toggled = [];
+  for (const k of COSMETIC_KNOBS) {
+    if (typeof VIEW3D[k] === "number" && VIEW3D[k] !== 0) { saved[k] = VIEW3D[k]; VIEW3D[k] = 0; toggled.push(k); }
+  }
+  try {
+    const off = run();
+    let maxDelta = 0;
+    for (let i = 0; i < base.length; i++)
+      for (let j = 0; j < 4; j++)
+        maxDelta = Math.max(maxDelta, Math.abs(base[i][j] - off[i][j]));
+    return { identical: maxDelta === 0, maxDelta, frames: base.length, toggled };
+  } finally {
+    Object.assign(VIEW3D, saved);
+  }
 };
 
 // Turn-torture sheet: full pivot (two same-direction halves 2 beats apart),
@@ -154,6 +202,7 @@ window.__simCorpus = async function (slugs, opts = {}) {
         maxRot: r.stats.maxRotRate, avgRot: r.stats.avgRotRate,
         maxCam: r.stats.maxCamSpeed, avgCam: r.stats.avgCamSpeed,
         maxFollow: r.stats.maxFollowRate, maxLag: r.stats.maxLagDeg,
+        maxLead: r.stats.maxLeadU,
         turns: r.analysis.turns.length, unsettled
       };
     } catch (e) {
@@ -166,6 +215,7 @@ window.__simCorpus = async function (slugs, opts = {}) {
     worstMaxRot: +Math.max(...ok.map(r => r.maxRot)).toFixed(1),
     worstMaxCam: +Math.max(...ok.map(r => r.maxCam)).toFixed(2),
     worstMaxLag: +Math.max(...ok.map(r => r.maxLag)).toFixed(1),
+    worstMaxLead: +Math.max(...ok.map(r => r.maxLead || 0)).toFixed(2),
     unsettledTurns: ok.reduce((s, r) => s + r.unsettled, 0)
   };
   return out;
