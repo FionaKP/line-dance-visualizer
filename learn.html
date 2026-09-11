@@ -111,7 +111,7 @@
   .fig-demo iframe {
     display: block;
     width: 100%;
-    height: 400px;
+    height: 400px; /* real height set from the card width when a demo opens */
     border: 0;
     background: var(--bg);
   }
@@ -310,6 +310,15 @@ function loopCounts(id) {
 
 let openCard = null; // one demo iframe at a time — kinder to the CPU
 
+// the embed page is the 520x440 floor plus a ~52px control strip: size the
+// iframe from the card's live width so nothing clips and nothing gapes
+function sizeDemo(card) {
+  const f = card.querySelector("iframe");
+  if (f) f.style.height = Math.round(card.clientWidth * 440 / 520 + 52) + "px";
+}
+const demoSizer = new ResizeObserver(() => { if (openCard) sizeDemo(openCard); });
+demoSizer.observe(document.documentElement);
+
 function toggleCard(card, id) {
   const opening = card !== openCard;
   if (openCard) closeCard(openCard);
@@ -325,6 +334,7 @@ function toggleCard(card, id) {
     f.loading = "lazy";
     demo.insertBefore(f, demo.firstChild);
   }
+  sizeDemo(card);
 }
 
 function closeCard(card) {
