@@ -9,9 +9,12 @@
 //       Structural matchers over parsed events. Structure ALWAYS outranks
 //       header prose — sheet-title words lie (drunken-sailor has no sailors,
 //       gypsy-queen's "monterey" is paddle turns).
-//   applyStyling(parsed)  -> tags; also (once) rewrites tagged events'
-//       dx/dy/turn to the catalog placement numbers, and stamps hints
-//       (turnout, glide) that the timeline builder carries onto keyframes.
+//   applyStyling(parsed, ctx) -> tags; also (once) applies each figure's
+//       motion TEMPLATE to its tagged events: placements snap to the one
+//       canonical rendered form of the figure, and hints (turnout, glide,
+//       accent) are stamped for the timeline builder to carry onto
+//       keyframes. ctx modulates character (tempo bands); choreography —
+//       beats, sheet turns, travel direction — is never changed.
 //   separateFeet(...)     -> the HARD spacing rule, applied to every landing
 //       at keyframe construction: boots never share a spot.
 //
@@ -397,151 +400,125 @@ function mKickBallChange(st, i) {
   return null;
 }
 
-// --- styling: catalog placement numbers, applied to tagged events ----------
-// All numbers in floor units; dx stays in the parser's mirrored convention
-// (writes use natSign so both feet get their natural side).
+// --- motion templates ------------------------------------------------------
+// Every catalog figure carries a `template`: the ONE canonical rendered form
+// of that figure, expressed as data. When detection tags a span, the
+// template normalizes the tagged events — placement magnitudes, spacing,
+// turnout, and motion character snap to the catalog form — so the same
+// figure reads identically in every dance. Templates never touch the
+// choreography: beats are never moved, sheet-stated turns are never changed
+// (a rolling vine ADDS a whole revolution — facing preserved), and travel
+// direction always stays what the sheet said; only magnitudes standardize.
+//
+// Template schema (all placement numbers in floor units):
+//   rules: { <classify() symbol>: spec, ... }   matched per tagged event
+//   seq:   [ spec | null, ... ]                 per-position override for
+//          fixed-length figures (a non-null seq[k] REPLACES the symbol rule
+//          for the span's k-th event)
+//   variants: { name: { when: {metaKey: value}, rules?, seq?, pre? } }
+//          first variant whose `when` keys all equal span.meta wins; its
+//          rules/seq replace the base ones, its pre augments
+//   pre:   { lookback: N, rules: {...} }        normalizes the setup steps
+//          just before the span (hip-bump stances plant wide, etc.)
+//   tempo: { slow: bpm, fast: bpm }             band edges (defaults below)
+//
+// spec fields:
+//   dx       canonical lateral placement in OWN-NATURAL units: +dx is the
+//            stepping foot's own natural side, -dx is a cross. Converted to
+//            the parser's mirrored dx convention at application.
+//   dy       canonical fore-aft placement (dancer frame, unmirrored)
+//   ground   "give" (a cross drops the reference line back; records dy) /
+//            "regain" (this step recovers it: dy = -given). Keeps a vine or
+//            weave's travel one straight lateral line.
+//   turnAdd  degrees added to ev.turn, mirrored by the span's leading foot
+//            (rolling vines spiral a full revolution — net facing unchanged)
+//   turnout  boots-yaw degrees for cross landings (kfAttitude hook)
+//   aOffAdd  degrees added to ev.aOff on the foot's natural sign
+//   motion   "glide" | "step", or { slow, mid, fast } keyed by tempo band —
+//            the tempo-aware character hook (vines glide when slow, sharpen
+//            when fast)
+//   accent   true — this is where the figure pops (keyframes carry it; the
+//            renderer gives accented landings a touch more arc)
+//
+// Application context (applyStyling(parsed, ctx)):
+//   ctx.bpm    song tempo; buckets into slow/mid/fast bands (defaults: slow
+//              <= 84, fast >= 116) for the per-rule `motion` hook
+//   ctx.style  reserved dance-level styling knobs for future per-song work
+// Surrounding figures are visible as parsed.figures; today the only
+// cross-figure rule is accent thinning: back-to-back repeats of the same
+// figure (vine R directly into vine L) pop once, on the last repeat.
 
-function styleVine(events, span) {
-  const evs = span.idx.map(i => events[i]);
-  let prevCrossDy = 0;
-  for (const ev of evs) {
-    if (!ev.foot) continue;
-    const ns = natSign(ev.foot);
-    const sym = classify(ev);
-    if (sym === "side") {
-      ev.dx = ns * Math.max(1.5, Math.min(2, Math.abs(ev.dx))); // wide side reach
-      // rejoin the vine's lateral line: the previous behind-cross dropped the
-      // reference foot back, so this side step regains that ground — travel
-      // stays a straight constant-velocity lateral glide
-      ev.dy = -prevCrossDy;
-      prevCrossDy = 0;
-      ev.glide = true;             // floor skim, no hop
-    } else if (sym === "crossB") {
-      // LOOSE behind: a narrow stagger, toe well behind the other heel —
-      // never a ballet lock. Toes slightly out via the boots' turnout pass.
-      ev.dx = -ns * 0.2;
-      ev.dy = -0.6;
-      prevCrossDy = -0.6;
-      ev.glide = true;
-    }
+const TEMPO_BANDS = { slow: 84, fast: 116 };
+
+function tempoBand(bpm, tpl) {
+  if (!bpm) return "mid";
+  const edges = (tpl && tpl.tempo) || {};
+  const slow = edges.slow !== undefined ? edges.slow : TEMPO_BANDS.slow;
+  const fast = edges.fast !== undefined ? edges.fast : TEMPO_BANDS.fast;
+  return bpm <= slow ? "slow" : bpm >= fast ? "fast" : "mid";
+}
+
+function motionFor(spec, band) {
+  const m = spec.motion;
+  if (!m) return null;
+  if (typeof m === "string") return m;
+  return m[band] !== undefined ? m[band] : (m.mid !== undefined ? m.mid : null);
+}
+
+function pickVariant(tpl, span) {
+  if (!tpl.variants) return null;
+  for (const name of Object.keys(tpl.variants)) {
+    const v = tpl.variants[name];
+    const w = v.when || {};
+    if (Object.keys(w).every(k => span.meta[k] === w[k])) return v;
   }
-  if (span.meta.rolling) {
-    // rolling vine: same lateral floor line, rotation layered continuously
-    // across counts 1-3 split 1/4-1/2-1/4, travel vector constant. Steps are
-    // re-expressed in the rotating frame so the world path stays a straight
-    // 1.25 u/count lateral glide while theta spirals a full turn.
-    const d = span.foot === "R" ? 1 : -1;         // vine R turns right
-    const [a, b, c] = span.idx;
-    const A = events[a], B = events[b], C = events[c];
-    A.turn = (A.turn || 0) + 90 * d;  A.dx = 0;  A.dy = 1.25;   // 1/4: step fwd
-    B.turn = (B.turn || 0) + 180 * d; B.dx = 0;  B.dy = -1.25;  // 1/2: step back
-    C.turn = (C.turn || 0) + 90 * d;  C.dx = natSign(C.foot) * 1.5; C.dy = 0;
-    A.glide = B.glide = C.glide = true;
+  return null;
+}
+
+// Apply one spec to one event. `ns` mirrors own-natural dx into the parser's
+// stored convention; `dir` mirrors turnAdd by the span's leading foot.
+// Self-moves (swivels, splits) and footless events only take character
+// fields — a template never relocates a foot relative to itself.
+function applySpec(ev, spec, dir, band, groundRef) {
+  const geometric = ev.foot && !ev.self;
+  const ns = ev.foot ? natSign(ev.foot) : dir;
+  if (geometric) {
+    if (spec.dx !== undefined) ev.dx = ns * spec.dx;
+    if (spec.dy !== undefined) ev.dy = spec.dy;
+    if (spec.ground === "regain") { ev.dy = -groundRef.dy; groundRef.dy = 0; }
+    if (spec.ground === "give") groundRef.dy = ev.dy;
+    if (spec.turnout !== undefined) ev.turnout = spec.turnout;
+    if (spec.aOffAdd !== undefined) ev.aOff = (ev.aOff || 0) + ns * spec.aOffAdd;
   }
+  if (spec.turnAdd) ev.turn = (ev.turn || 0) + spec.turnAdd * dir;
+  const mo = motionFor(spec, band);
+  if (mo === "glide") ev.glide = true;
+  else if (mo === "step") delete ev.glide;
+  if (spec.accent) ev.accent = true;
 }
 
-function styleWeave(events, span) {
-  let prevCrossDy = 0;
-  for (const i of span.idx) {
-    const ev = events[i];
-    if (!ev.foot) continue;
-    const ns = natSign(ev.foot);
-    const sym = classify(ev);
-    if (sym === "crossF") { ev.dx = -ns * 0.3; ev.dy = 0.4; prevCrossDy = 0.4; }
-    else if (sym === "crossB") { ev.dx = -ns * 0.2; ev.dy = -0.55; prevCrossDy = -0.55; }
-    else if (sym === "side" || sym === "close") { ev.dy = -prevCrossDy; prevCrossDy = 0; }
-  }
-}
-
-function styleJazzBox(events, span) {
-  // compact ~1-unit box danced in place; shallow turned-out cross
-  const [a, b, c, d] = span.idx;
-  const A = events[a], B = events[b], C = events[c], D = events[d];
-  const ns = natSign(A.foot);
-  A.dx = -ns * 0.3; A.dy = 0.45; A.turnout = 30;   // shallow cross, toes out
-  B.dx = ns * 0.28; B.dy = -0.9;                   // small back weight roll under the hip
-  C.dx = ns * 0.9;  C.dy = 0.45;                   // side, back onto the home line
-  D.dx = -ns * 0.85; D.dy = 0;                     // gather — the box nets zero travel
-}
-
-function styleKStep(events, span) {
-  // body square to the front the whole time — diagonals live in the feet.
-  // Steps travel ~1.4u along the 45° corner lines; touches dab beside the
-  // support instep.
-  for (const i of span.idx) {
-    const ev = events[i];
-    if (!ev.foot) continue;
-    const sym = classify(ev);
-    const ns = natSign(ev.foot);
-    if (sym === "fwd") { ev.dx = ns * 1.0; ev.dy = 1.0; }
-    else if (sym === "back") { ev.dx = ns * 1.0; ev.dy = -1.0; }
-    else if (sym === "touch") { ev.dx = ns * 0.7; ev.dy = 0; }
-  }
-}
-
-function styleCoaster(events, span) {
-  const [a, b, c] = span.idx;
-  const A = events[a], B = events[b], C = events[c];
-  A.dx = natSign(A.foot) * 0.85; A.dy = -1.1;       // sit down into the back
-  B.dx = natSign(B.foot) * 1.0;  B.dy = 0.05;       // & together, ~0.5u daylight
-  C.dx = natSign(C.foot) * 0.85; C.dy = 1.0;        // forward out of it
-}
-
-function styleSailor(events, span) {
-  const [a, b, c] = span.idx;
-  const A = events[a], B = events[b], C = events[c];
-  A.dx = -natSign(A.foot) * 0.22; A.dy = -0.5;      // behind on the ball
-  B.dx = natSign(B.foot) * 1.4;  B.dy = 0.35;       // out (regains the line)...
-  C.dx = natSign(C.foot) * 1.2;  C.dy = 0.1;        // ...out: wide low stance
-}
-
-function styleScissor(events, span) {
-  const [a, b, c] = span.idx;
-  const A = events[a], C = events[c];
-  A.dx = natSign(A.foot) * 1.5;
-  C.dx = -natSign(C.foot) * 0.3; C.dy = 0.4; C.turnout = 25; // snug accent cross
-}
-
-function styleRockingChair(events, span) {
-  for (const i of span.idx) {
-    const ev = events[i];
-    const sym = classify(ev);
-    if (sym === "rockF") ev.dy = 1.3;
-    else if (sym === "rockB") ev.dy = -1.3;
-  }
-}
-
-function styleLock(events, span) {
-  for (const i of span.idx) {
-    const ev = events[i];
-    const sym = classify(ev);
-    if (sym === "lockF" || sym === "lockB") {
-      ev.dx = -natSign(ev.foot) * 0.18;             // tucked directly behind
-      ev.dy = sym === "lockF" ? 0.47 : -0.47;       // ball-only tuck, boots clear
-    }
-  }
-}
-
-function styleCharleston(events, span) {
-  for (const i of span.idx) {
-    const ev = events[i];
-    const sym = classify(ev);
-    if (sym === "touchF") ev.dy = 1.1;
-    else if (sym === "touchB") ev.dy = -1.1;
-  }
-}
-
-function styleHipBumps(events, span) {
-  if (span.meta.stance !== "wide") return;
-  // wide planted stance: the last placements before the bumps spread to a
-  // 1.5-2u straddle with toes 10-15 deg out, then stay planted
-  for (let k = span.idx[0] - 1; k >= 0 && k >= span.idx[0] - 3; k--) {
-    const ev = events[k];
-    if (!ev || !ev.foot || ev.lifted) continue;
-    if (classify(ev) === "side") {
-      const ns = natSign(ev.foot);
-      ev.dx = ns * 1.7;
-      ev.aOff = (ev.aOff || 0) + ns * 12;
+function applyTemplate(events, span, ctx) {
+  const tpl = REGISTRY[span.figureId].template;
+  if (!tpl) return;
+  const band = tempoBand(ctx && ctx.bpm, tpl);
+  const variant = pickVariant(tpl, span);
+  const rules = (variant && variant.rules) || tpl.rules || {};
+  const seq = (variant && variant.seq) || tpl.seq || null;
+  const dir = natSign(span.foot || "R");
+  const groundRef = { dy: 0 };
+  span.idx.forEach((ei, k) => {
+    const ev = events[ei];
+    const spec = (seq && seq[k]) || rules[classify(ev)];
+    if (spec) applySpec(ev, spec, dir, band, groundRef);
+  });
+  const pre = (variant && variant.pre) || tpl.pre;
+  if (pre) {
+    // normalize the setup steps immediately before the span (planted stances)
+    for (let k = span.idx[0] - 1; k >= 0 && k >= span.idx[0] - pre.lookback; k--) {
+      const ev = events[k];
+      if (!ev || !ev.foot || ev.lifted) continue;
+      const spec = pre.rules[classify(ev)];
+      if (spec) applySpec(ev, spec, dir, band, groundRef);
     }
   }
 }
@@ -549,7 +526,10 @@ function styleHipBumps(events, span) {
 // --- registry --------------------------------------------------------------
 // header: prose regex (a hint/label aid only — structure decides);
 // match: structural matcher; canon: loopable teaching sequence;
-// style: placement rewrite for tagged spans.
+// template: the canonical rendered form applied to tagged spans (schema
+// above). Template geometry and canon geometry are the same numbers — the
+// tests assert they agree, so the learn-the-steps demo (canon) and in-dance
+// rendering (template) share one source of truth.
 // (named REGISTRY, not FIGURES: in the browser this file is a classic
 // script, and a top-level `const FIGURES` would shadow the window.FIGURES
 // API object for every other script on the page)
@@ -557,7 +537,35 @@ const REGISTRY = {
   vine: {
     label: s => (s && s.meta && s.meta.rolling ? "Rolling vine " : "Vine ") + (s ? s.foot : "R"),
     header: /\b(grapevine|(?:rolling\s+)?vine|weave)\b/i,
-    match: mVine, style: styleVine,
+    match: mVine,
+    template: {
+      rules: {
+        // wide side reach along one straight lateral line ("regain" undoes
+        // the ground the behind-cross gave up); floor-skim glide at easy
+        // tempos, a crisper step when the song pushes
+        side:   { dx: 1.7, ground: "regain",
+                  motion: { slow: "glide", mid: "glide", fast: "step" } },
+        // LOOSE behind: narrow stagger, toe well behind the other heel —
+        // never a ballet lock
+        crossB: { dx: -0.2, dy: -0.6, ground: "give",
+                  motion: { slow: "glide", mid: "glide", fast: "step" } },
+        // the count-4 touch gathers beside the support and pops
+        touch:  { dx: 0.85, dy: 0, accent: true }
+      },
+      variants: {
+        // rolling vine: same lateral floor line, rotation layered
+        // continuously across counts 1-3 split 1/4-1/2-1/4 (a full added
+        // revolution — facing preserved), travel vector constant 1.25u/count
+        rolling: {
+          when: { rolling: true },
+          seq: [
+            { turnAdd: 90,  dx: 0,   dy: 1.25,  motion: "glide" },
+            { turnAdd: 180, dx: 0,   dy: -1.25, motion: "glide" },
+            { turnAdd: 90,  dx: 1.5, dy: 0,     motion: "glide" }
+          ]
+        }
+      }
+    },
     canon: [
       { count: 1, foot: "R", action: "side",       dx: 1.7,  dy: 0 },
       { count: 2, foot: "L", action: "cross_back", dx: 0.2,  dy: -0.6 },
@@ -572,7 +580,15 @@ const REGISTRY = {
   weave: {
     label: () => "Weave",
     header: /\bweave\b/i,
-    match: mWeave, style: styleWeave,
+    match: mWeave,
+    template: {
+      rules: {
+        crossF: { dx: -0.3, dy: 0.4,   ground: "give" },
+        crossB: { dx: -0.2, dy: -0.55, ground: "give" },
+        side:   { dx: 1.6, ground: "regain" },
+        close:  { ground: "regain" }
+      }
+    },
     canon: [
       { count: 1, foot: "R", action: "side",        dx: 1.6,  dy: 0 },
       { count: 2, foot: "L", action: "cross_front", dx: 0.3,  dy: 0.4 },
@@ -595,7 +611,18 @@ const REGISTRY = {
   jazz_box: {
     label: s => "Jazz box" + (s && s.meta.turn ? " ¼" : ""),
     header: /\bjazz\s*(box|square)\b/i,
-    match: mJazzBox, style: styleJazzBox,
+    match: mJazzBox,
+    template: {
+      // compact ~1-unit box danced in place: shallow turned-out accent
+      // cross, small back weight roll under the hip, side back onto the
+      // home line, gather — the box nets zero travel
+      seq: [
+        { dx: -0.3,  dy: 0.45, turnout: 30, accent: true },
+        { dx: -0.28, dy: -0.9 },
+        { dx: 0.9,   dy: 0.45 },
+        { dx: 0.85,  dy: 0 }
+      ]
+    },
     canon: [
       { count: 1, foot: "R", action: "cross_front", dx: -0.3,  dy: 0.45 },
       { count: 2, foot: "L", action: "back",        dx: 0.28,  dy: -0.9 },
@@ -610,7 +637,17 @@ const REGISTRY = {
   k_step: {
     label: () => "K step",
     header: /\bk[\s-]?step\b/i,
-    match: mKStep, style: styleKStep,
+    match: mKStep,
+    template: {
+      // body square to the front the whole time — the diagonals live in the
+      // feet (~1.4u along the 45° corner lines); touches dab beside the
+      // support instep and pop with their claps
+      rules: {
+        fwd:   { dx: 1.0, dy: 1.0 },
+        back:  { dx: 1.0, dy: -1.0 },
+        touch: { dx: 0.7, dy: 0, accent: true }
+      }
+    },
     canon: [
       { count: 1, foot: "R", action: "fwd_diag",  dx: 1.0,   dy: 1.0 },
       { count: 2, foot: "L", action: "touch",     dx: -0.7,  dy: 0, clap: true },
@@ -625,7 +662,14 @@ const REGISTRY = {
   lindy: {
     label: s => "Lindy " + (s ? s.foot : "R"),
     header: /\blindy\b/i,
-    match: mLindy, style: null,
+    match: mLindy,
+    template: {
+      rules: {
+        side:  { dx: 1.6 },
+        close: { dx: 0.85, dy: 0.1 },
+        rockB: { dx: 0.85, dy: -1.1 }
+      }
+    },
     canon: [
       { count: 1,   foot: "R", action: "side",    dx: 1.6,   dy: 0 },
       { count: 1.5, foot: "L", action: "close",   dx: -0.85, dy: 0.1 },
@@ -642,7 +686,15 @@ const REGISTRY = {
   rocking_chair: {
     label: s => "Rocking chair" + (s && s.foot ? " " + s.foot : ""),
     header: /\brocking\s+chair\b/i,
-    match: mRockingChair, style: styleRockingChair,
+    match: mRockingChair,
+    template: {
+      // dead-stationary fore-aft pendulum: full 1.3u rocks (the rock
+      // profile's lean-and-rebound supplies the character)
+      rules: {
+        rockF: { dy: 1.3 },
+        rockB: { dy: -1.3 }
+      }
+    },
     canon: [
       { count: 1, foot: "R", action: "rock_fwd",  dx: 0.85,  dy: 1.3 },
       { count: 2, action: "recover", weight: "L" },
@@ -653,7 +705,15 @@ const REGISTRY = {
   coaster: {
     label: s => "Coaster " + (s ? s.foot : "R"),
     header: /\bcoaster\b/i,
-    match: mCoaster, style: styleCoaster,
+    match: mCoaster,
+    template: {
+      // sit down into the back, & gather with ~0.5u daylight, forward out
+      seq: [
+        { dx: 0.85, dy: -1.1 },
+        { dx: 1.0,  dy: 0.15 },
+        { dx: 0.85, dy: 0.95 }
+      ]
+    },
     canon: [
       { count: 1,   foot: "R", action: "back",  dx: 0.85,  dy: -1.1 },
       { count: 1.5, foot: "L", action: "close", dx: -1.0,  dy: 0.15 },
@@ -666,7 +726,15 @@ const REGISTRY = {
   sailor: {
     label: s => "Sailor " + (s ? s.foot : "R"),
     header: /\bsailor\b/i,
-    match: mSailor, style: styleSailor,
+    match: mSailor,
+    template: {
+      // behind on the ball, then out-out into a wide low straddle
+      seq: [
+        { dx: -0.22, dy: -0.5 },
+        { dx: 1.4,   dy: 0.35 },
+        { dx: 1.2,   dy: 0.15 }
+      ]
+    },
     canon: [
       { count: 1,   foot: "R", action: "cross_back", dx: -0.22, dy: -0.5 },
       { count: 1.5, foot: "L", action: "side",       dx: -1.4,  dy: 0.35 },
@@ -679,7 +747,23 @@ const REGISTRY = {
   mambo: {
     label: s => (s && s.meta.variant === "cha" ? "Cha " : "Mambo ") + (s ? s.foot : "R"),
     header: /\b(mambo|cha[\s-]?cha)\b/i,
-    match: mMambo, style: null,
+    match: mMambo,
+    template: {
+      variants: {
+        // true mambo: standardized rock reach, close gathers on its side.
+        // The cha/triple variant TRAVELS — its geometry is choreography,
+        // so the template leaves it exactly as the sheet said.
+        mambo: {
+          when: { variant: "mambo" },
+          rules: {
+            rockF: { dx: 0.85, dy: 1.05 },
+            rockB: { dx: 0.85, dy: -1.05 },
+            close: { dx: 0.85 }
+          }
+        },
+        cha: { when: { variant: "cha" }, rules: {} }
+      }
+    },
     canon: [
       { count: 1,   foot: "R", action: "rock_fwd", dx: 0.85,  dy: 1.05 },
       { count: 1.5, action: "recover", weight: "L" },
@@ -692,7 +776,14 @@ const REGISTRY = {
   lock_step: {
     label: s => "Lock step " + (s ? s.foot : "R"),
     header: /\b(lock(?:ing)?\s*step|dorothy)\b/i,
-    match: mLock, style: styleLock,
+    match: mLock,
+    template: {
+      // the lock tucks directly behind on the ball — boots clear
+      rules: {
+        lockF: { dx: -0.18, dy: 0.47 },
+        lockB: { dx: -0.18, dy: -0.47 }
+      }
+    },
     canon: [
       // forward lock step out, backward lock step home — net zero travel
       { count: 1,   foot: "R", action: "fwd",        dx: 0.85,  dy: 0.9 },
@@ -708,7 +799,15 @@ const REGISTRY = {
   pivot: {
     label: s => "Pivot " + (s && Math.abs(s.meta.deg) >= 135 ? "½" : "¼"),
     header: /\bpivot\b/i,
-    match: mPivot, style: null,
+    match: mPivot,
+    template: {
+      // standardized prep stride; the turn itself is choreography — the
+      // sheet's stated degrees pass through untouched (thetaAt supplies the
+      // whip-and-settle character)
+      rules: {
+        fwd: { dx: 0.85, dy: 0.9 }
+      }
+    },
     canon: [
       { count: 1, foot: "R", action: "fwd",   dx: 0.85, dy: 0.9 },
       { count: 2, foot: "L", action: "pivot", dx: -0.85, dy: 0, turn: -180 },
@@ -719,7 +818,14 @@ const REGISTRY = {
   monterey: {
     label: s => "Monterey " + (s && Math.abs(s.meta.deg) >= 135 ? "½" : "¼"),
     header: /\bmonterey\b/i,
-    match: mMonterey, style: null,
+    match: mMonterey,
+    template: {
+      // full point reach to the side is the figure's pop; the spinning
+      // close keeps the sheet's turn exactly
+      rules: {
+        touchS: { dx: 1.55, dy: 0, accent: true }
+      }
+    },
     canon: [
       { count: 1, foot: "R", action: "point_side", dx: 1.55,  dy: 0, lifted: true },
       { count: 2, foot: "R", action: "close",      dx: 0.85,  dy: 0.1, turn: 180 },
@@ -734,7 +840,15 @@ const REGISTRY = {
   scissor: {
     label: s => "Scissor " + (s ? s.foot : "R"),
     header: /\bscissors?\b/i,
-    match: mScissor, style: styleScissor,
+    match: mScissor,
+    template: {
+      // wide side reach, & gather, snug turned-out accent cross
+      seq: [
+        { dx: 1.5 },
+        null,
+        { dx: -0.3, dy: 0.4, turnout: 25, accent: true }
+      ]
+    },
     canon: [
       { count: 1,   foot: "R", action: "side",        dx: 1.5,   dy: -0.4 },
       { count: 1.5, foot: "L", action: "close",       dx: -0.85, dy: -0.1 },
@@ -747,7 +861,15 @@ const REGISTRY = {
   charleston: {
     label: () => "Charleston",
     header: /\bcharleston\b/i,
-    match: mCharleston, style: styleCharleston,
+    match: mCharleston,
+    template: {
+      // fore-aft pendulum: strikes reach a full 1.1u, net zero travel
+      rules: {
+        touchF: { dy: 1.1, accent: true },
+        touchB: { dy: -1.1, accent: true },
+        kick:   { accent: true }
+      }
+    },
     canon: [
       { count: 1, foot: "R", action: "touch_fwd", dx: 0.85,  dy: 1.1, lifted: true },
       { count: 2, foot: "R", action: "back",      dx: 0.85,  dy: -0.9 },
@@ -758,7 +880,19 @@ const REGISTRY = {
   hip_bumps: {
     label: s => "Hip bumps" + (s && s.meta.stance ? " (" + s.meta.stance + ")" : ""),
     header: /\b(hip\s*bumps?|bump\s*hips?)\b/i,
-    match: mHipBumps, style: styleHipBumps,
+    match: mHipBumps,
+    template: {
+      // bumps themselves are body styling (footless events); the template's
+      // job is the STANCE. Wide-planted bumps spread the setup side steps
+      // to a 1.5-2u straddle with toes 10-15 deg out, then stay planted.
+      rules: {},
+      variants: {
+        wide: {
+          when: { stance: "wide" },
+          pre: { lookback: 3, rules: { side: { dx: 1.7, aOffAdd: 12 } } }
+        }
+      }
+    },
     canon: [
       { count: 1, foot: "R", action: "side",  dx: 1.7, dy: 0, aOff: 12 },
       { count: 2, foot: "L", action: "side",  dx: -1.7, dy: 0, aOff: -12 },
@@ -773,7 +907,14 @@ const REGISTRY = {
   heel_splits: {
     label: () => "Heel splits",
     header: /\b(heel\s*splits?|buttermilks?)\b/i,
-    match: mHeelSplits, style: null,
+    match: mHeelSplits,
+    template: {
+      // splits are self-moves — the parser's fan angles ARE the canonical
+      // form; the template only marks the outward fan as the pop
+      rules: {
+        split_out: { accent: true }
+      }
+    },
     canon: [
       { count: 1, foot: "R", action: "heels_out", dx: 0.15,  dy: 0, aOff: -18, self: true },
       { count: 1, foot: "L", action: "heels_out", dx: -0.15, dy: 0, aOff: 18, self: true },
@@ -784,7 +925,23 @@ const REGISTRY = {
   kick_ball_change: {
     label: s => "Kick-ball-change " + (s ? s.foot : "R"),
     header: /\bkick[\s-]?ball[\s-]?change\b/i,
-    match: mKickBallChange, style: null,
+    match: mKickBallChange,
+    template: {
+      variants: {
+        // low knee-flick out (the accent), & ball dab beside the support,
+        // weight change back — zero net travel
+        full: {
+          when: { full: true },
+          seq: [
+            { dx: 0.6,  dy: 1.1, accent: true },
+            { dx: 0.85, dy: 0.1 },
+            { dx: 0.85, dy: -0.1 }
+          ]
+        },
+        // sheets that wrote it as one phrase parse to a lone kick — leave it
+        named: { when: { full: false }, rules: {} }
+      }
+    },
     canon: [
       // low knee-flick out, & ball dab beside the support (heel high), weight
       // change back — zero net travel
@@ -832,16 +989,27 @@ function detectFigures(parsed) {
 }
 
 // --- styling entry point ---------------------------------------------------
-// Detects (cached on the parsed object) and rewrites tagged events' geometry
-// to catalog placement, exactly once per parsed sheet. buildTimeline calls
-// this every rebuild; the guard keeps it idempotent.
-function applyStyling(parsed) {
+// Detects (cached on the parsed object) and applies each tagged span's
+// template, exactly once per parsed sheet. buildTimeline calls this every
+// rebuild; the guard keeps it idempotent (rolling-vine turnAdd is additive,
+// so a second application would double the spiral). ctx is optional:
+// { bpm, style } — see the template schema notes above.
+function applyStyling(parsed, ctx) {
   if (!parsed.figures) parsed.figures = detectFigures(parsed);
   if (parsed._figStyled) return parsed.figures;
   parsed._figStyled = true;
   for (const span of parsed.figures) {
-    const entry = REGISTRY[span.figureId];
-    if (entry.style) entry.style(parsed.events, span);
+    applyTemplate(parsed.events, span, ctx);
+  }
+  // cross-figure context: a figure repeated back-to-back (vine R straight
+  // into vine L) pops once, at its true end — earlier repeats yield their
+  // accents to the last one
+  const spans = parsed.figures;
+  for (let i = 0; i + 1 < spans.length; i++) {
+    if (spans[i + 1].figureId === spans[i].figureId &&
+        spans[i + 1].startBeat - spans[i].endBeat <= 0.05) {
+      for (const j of spans[i].idx) delete parsed.events[j].accent;
+    }
   }
   return parsed.figures;
 }
@@ -879,8 +1047,8 @@ function labelForLine(parsed, line) {
 
 // --- exports ---------------------------------------------------------------
 const API = {
-  FIGURES: REGISTRY, detectFigures, applyStyling, separateFeet, classify,
-  labelForSection, labelForLine, SEP
+  FIGURES: REGISTRY, detectFigures, applyStyling, applyTemplate, separateFeet,
+  classify, labelForSection, labelForLine, SEP, TEMPO_BANDS, tempoBand
 };
 
 if (typeof module !== "undefined" && module.exports) {
