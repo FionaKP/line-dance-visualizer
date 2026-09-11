@@ -346,6 +346,7 @@ function closeCard(card) {
 }
 
 const groupsEl = document.getElementById("groups");
+const cardById = {};
 for (const [title, ids] of GROUPS) {
   const h = document.createElement("h2");
   h.className = "group";
@@ -374,6 +375,16 @@ for (const [title, ids] of GROUPS) {
       "</div>";
     card.querySelector(".fig-head").addEventListener("click", () => toggleCard(card, id));
     grid.appendChild(card);
+    cardById[id] = card;
+  }
+}
+
+// deep link: learn.html#vine opens that figure's demo straight away
+{
+  const want = decodeURIComponent(location.hash.replace(/^#/, ""));
+  if (want && cardById[want]) {
+    toggleCard(cardById[want], want);
+    cardById[want].scrollIntoView({ block: "center" });
   }
 }
 </script>
