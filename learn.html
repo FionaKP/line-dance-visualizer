@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Learn the Steps — Line Dance Visualizer</title>
+<style>
+  :root {
+    /* rustic-modern: warm espresso surfaces, leather-and-turquoise accents
+       (same tokens as index.html — keep the two in step) */
+    --bg: #191310;
+    --panel: #241c15;
+    --panel-2: #2d2318;
+    --border: #3e3122;
+    --text: #f0e9dc;
+    --muted: #a89a85;
+    --left: #d64545;
+    --right: #c98f52;
+    --accent: #4fb3a9;
+    --accent-dim: #23332e;
+    --warn: #f0c05a;
+    --display: Rockwell, "Iowan Old Style", "Book Antiqua", Georgia, serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Segoe UI", system-ui, sans-serif;
+    min-height: 100vh;
+    padding: 20px;
+  }
+  .app { max-width: 1040px; margin: 0 auto; }
+  header { display: flex; align-items: baseline; gap: 16px; margin-bottom: 6px; }
+  header h1 { font-family: var(--display); font-size: 1.55rem; font-weight: 700; letter-spacing: 0.01em; }
+  .back-link {
+    margin-left: auto;
+    color: var(--muted);
+    font-size: 0.8rem;
+    text-decoration: none;
+    white-space: nowrap;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 6px 10px;
+    transition: color 0.15s, border-color 0.15s;
+  }
+  .back-link:hover { color: var(--accent); border-color: var(--accent); }
+  .intro { color: var(--muted); font-size: 0.9rem; margin-bottom: 20px; max-width: 640px; line-height: 1.5; }
+
+  h2.group {
+    font-family: var(--display);
+    font-size: 1.05rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    color: var(--text);
+    margin: 26px 0 12px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+  }
+  h2.group:first-of-type { margin-top: 0; }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 14px;
+    align-items: start;
+  }
+  .fig-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: inset 0 1px 0 rgba(255, 220, 170, 0.04), 0 4px 14px rgba(0, 0, 0, 0.28);
+  }
+  .fig-card.open { border-color: var(--accent); }
+  .fig-head {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: none;
+    border: 0;
+    color: inherit;
+    font: inherit;
+    padding: 14px 16px 12px;
+    cursor: pointer;
+  }
+  .fig-head:hover { background: var(--panel-2); }
+  .fig-title { display: flex; align-items: baseline; gap: 8px; }
+  .fig-title .name { font-family: var(--display); font-size: 1.05rem; font-weight: 700; }
+  .chip {
+    font-size: 0.68rem;
+    line-height: 1;
+    padding: 3px 7px;
+    border-radius: 9px;
+    border: 1px solid var(--border);
+    background: var(--panel-2);
+    color: var(--muted);
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+  .fig-title .show {
+    margin-left: auto;
+    color: var(--accent);
+    font-size: 0.76rem;
+    white-space: nowrap;
+  }
+  .fig-desc { color: var(--muted); font-size: 0.83rem; line-height: 1.45; margin-top: 8px; }
+  .fig-seen { color: var(--muted); font-size: 0.74rem; margin-top: 8px; }
+  .fig-seen b { color: var(--text); font-weight: 500; }
+  .fig-demo { display: none; border-top: 1px solid var(--border); }
+  .fig-card.open .fig-demo { display: block; }
+  .fig-demo iframe {
+    display: block;
+    width: 100%;
+    height: 400px;
+    border: 0;
+    background: var(--bg);
+  }
+  .fig-demo .demo-foot {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 16px 10px;
+    background: var(--panel-2);
+    border-top: 1px solid var(--border);
+    font-size: 0.76rem;
+  }
+  .fig-demo .demo-foot a { color: var(--accent); text-decoration: none; }
+  .fig-demo .demo-foot a:hover { text-decoration: underline; }
+  .fig-demo .demo-foot .hint { color: var(--muted); margin-left: auto; text-align: right; }
+
+  footer { color: var(--muted); font-size: 0.76rem; margin-top: 30px; }
+  footer a { color: var(--accent); text-decoration: none; }
+  footer a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>Learn the steps</h1>
+    <a class="back-link" href="index.html">← Back to the visualizer</a>
+  </header>
+  <p class="intro">
+    The basic figures that most line dances are built from. Open a card to
+    watch the boots dance it on a loop — every demo runs at an easy learning
+    tempo, and you can slow it down further with the slider. When a figure
+    clicks, load a real dance in the visualizer and spot it in the wild.
+  </p>
+  <div id="groups"></div>
+  <footer>
+    Demos are generated from the figure catalog's canonical counts and played
+    by the <a href="index.html">visualizer</a> itself — what you see is
+    exactly how these steps render inside a full dance.
+  </footer>
+</div>
+
+<script src="figures.js"></script>
+<script>
+"use strict";
+
+// Teaching copy per figure. `seen`: dances from the bundled corpus that
+// figures.js detection actually tags with this figure (computed offline with
+// detectFigures over tuning/corpus — keep in step if the corpus changes).
+const CARDS = {
+  vine: {
+    name: "Grapevine",
+    desc: "Step side, cross behind, step side — then touch beside so the other " +
+      "side can start. Keep the behind step loose (toe behind the other heel, " +
+      "not a ballet lock), and remember the touch is weightless: the vine ends " +
+      "with weight on the side-stepping foot.",
+    seen: ["Electric Slide", "Canadian Stomp"]
+  },
+  weave: {
+    name: "Weave",
+    desc: "A vine that crosses both ways: side, cross in front, side, cross " +
+      "behind, and keep going. The crosses alternate front and back while you " +
+      "travel one direction — stay compact and let the hips face front so the " +
+      "knees never tangle.",
+    seen: ["Gypsy Queen", "The Twinkle Toes Waltz"]
+  },
+  jazz_box: {
+    name: "Jazz box",
+    desc: "Cross over, step back, step side, step together — a small box that " +
+      "ends where it started. Dance it under your hips: the cross stays " +
+      "shallow, and the final step takes weight so the crossing foot is free " +
+      "to start again.",
+    seen: ["Black Velvet", "Canadian Stomp"]
+  },
+  k_step: {
+    name: "K step",
+    desc: "Diagonal forward, touch with a clap; diagonal back, touch; then the " +
+      "same two corners home — the floor path draws a K. Your body stays " +
+      "square to the front wall the whole time: only the feet travel the " +
+      "diagonals, and every touch is weightless.",
+    seen: ["Drunken Sailor"]
+  },
+  lindy: {
+    name: "Lindy",
+    desc: "A side chasse (side, together, side) followed by a rock back and " +
+      "recover — usually danced right then left. Keep the rock back small and " +
+      "on the ball of the foot; the recover hands your weight over so the " +
+      "other side can start.",
+    seen: []
+  },
+  rocking_chair: {
+    name: "Rocking chair",
+    desc: "Rock forward, recover, rock back, recover — four counts on one " +
+      "spot. The rocking foot never takes your full weight and the standing " +
+      "foot never moves: think of tipping like a rocking chair, not stepping.",
+    seen: ["Cajun Queen", "Rockin' The Wagon Wheel"]
+  },
+  coaster: {
+    name: "Coaster step",
+    desc: "Step back, close beside on the &, step forward — a quick " +
+      "back-together-forward triple that reverses your direction. Sink into " +
+      "the back step and come out forward on the same foot you went in on.",
+    seen: ["Blue Night Cha", "Chill Factor"]
+  },
+  sailor: {
+    name: "Sailor step",
+    desc: "Cross behind, then step out-out into a wide, low stance on a 1&2. " +
+      "The lean goes opposite the crossing foot — that little off-balance sway " +
+      "is the point. Stay on the balls of the feet and keep it low; sailors " +
+      "sway, they don't travel.",
+    seen: ["Sambas and Sailors"]
+  },
+  mambo: {
+    name: "Mambo",
+    desc: "Rock in a direction, recover, then close beside — three quick steps " +
+      "that never leave your spot. The rock only half-commits: roll the weight " +
+      "out and straight back so the closing step lands under you with a clean " +
+      "weight change.",
+    seen: ["The Picnic Polka", "Tush Push"]
+  },
+  lock_step: {
+    name: "Lock step",
+    desc: "Step forward, lock the free foot tight behind the leading one, step " +
+      "forward again — a traveling triple. The lock is a ball-of-the-foot tuck " +
+      "directly behind, never a full cross; going backward the lock tucks in " +
+      "front instead.",
+    seen: ["Bosa Nova", "Chill Factor"]
+  },
+  kick_ball_change: {
+    name: "Kick-ball-change",
+    desc: "Kick low, drop the ball of the same foot beside the other on the &, " +
+      "and change weight back — all inside one 1&2. You end exactly where you " +
+      "started with the same foot free, which is why it loves to repeat.",
+    seen: ["Black Velvet", "The Picnic Polka"]
+  },
+  scissor: {
+    name: "Scissor step",
+    desc: "Step side, close beside on the &, then cross tightly over — the " +
+      "feet snip shut like scissor blades. The cross takes your weight and is " +
+      "the accent: keep it snug against the standing foot with the toes " +
+      "slightly turned out.",
+    seen: []
+  },
+  pivot: {
+    name: "Pivot turn",
+    desc: "Step forward, then swivel a half (or quarter) turn on the balls of " +
+      "both feet. The direction names the shoulder you turn over — a pivot ½ " +
+      "left turns you over your left shoulder — and your weight ends on the " +
+      "foot that was behind.",
+    seen: ["Black Velvet", "Tush Push"]
+  },
+  monterey: {
+    name: "Monterey turn",
+    desc: "Point side, then close WITH the turn: spin the half on the standing " +
+      "ball while the pointed foot pulls in and takes weight. The turn always " +
+      "goes toward the pointing foot; the plain point-and-close on the other " +
+      "side finishes the figure.",
+    seen: ["1001 Arabian Nights"]
+  },
+  charleston: {
+    name: "Charleston",
+    desc: "Touch forward, step back, touch back, step forward — a swinging " +
+      "see-saw over four counts. The touches are weightless dabs at full " +
+      "reach; the steps between change weight so the same foot keeps doing the " +
+      "swinging.",
+    seen: ["Mamma Maria", "Watermelon Crawl"]
+  },
+  hip_bumps: {
+    name: "Hip bumps",
+    desc: "Plant your feet and push the hips to the beat — singles or doubles, " +
+      "one side then the other. Your weight stays put the whole time: the move " +
+      "lives in the hips and knees, not in the feet.",
+    seen: ["Cowboy Boogie", "Tush Push"]
+  },
+  heel_splits: {
+    name: "Heel splits",
+    desc: "With feet together, fan both heels out on the balls of your feet, " +
+      "then snap them back in. No travel and no weight change — also called " +
+      "buttermilks. Knees stay soft and together.",
+    seen: ["1001 Arabian Nights", "Drunken Sailor"]
+  }
+};
+
+const GROUPS = [
+  ["Vines & boxes", ["vine", "weave", "jazz_box", "k_step"]],
+  ["Rocks & triples", ["rocking_chair", "mambo", "coaster", "sailor",
+                       "scissor", "lock_step", "lindy", "kick_ball_change"]],
+  ["Turns", ["pivot", "monterey"]],
+  ["In place & styling", ["charleston", "hip_bumps", "heel_splits"]]
+];
+
+// loop length straight from the figure catalog's canonical counts
+function loopCounts(id) {
+  const canon = FIGURES.FIGURES[id].canon;
+  return Math.ceil(canon[canon.length - 1].count);
+}
+
+let openCard = null; // one demo iframe at a time — kinder to the CPU
+
+function toggleCard(card, id) {
+  const opening = card !== openCard;
+  if (openCard) closeCard(openCard);
+  if (!opening) return;
+  openCard = card;
+  card.classList.add("open");
+  card.querySelector(".show").textContent = "hide ✕";
+  const demo = card.querySelector(".fig-demo");
+  if (!demo.querySelector("iframe")) {
+    const f = document.createElement("iframe");
+    f.src = "index.html?figure=" + encodeURIComponent(id) + "&embed=1";
+    f.title = CARDS[id].name + " demo";
+    f.loading = "lazy";
+    demo.insertBefore(f, demo.firstChild);
+  }
+}
+
+function closeCard(card) {
+  card.classList.remove("open");
+  card.querySelector(".show").textContent = "watch ▸";
+  const f = card.querySelector("iframe");
+  if (f) f.remove(); // stop the loop entirely when the card closes
+  if (openCard === card) openCard = null;
+}
+
+const groupsEl = document.getElementById("groups");
+for (const [title, ids] of GROUPS) {
+  const h = document.createElement("h2");
+  h.className = "group";
+  h.textContent = title;
+  groupsEl.appendChild(h);
+  const grid = document.createElement("div");
+  grid.className = "grid";
+  groupsEl.appendChild(grid);
+  for (const id of ids) {
+    const c = CARDS[id];
+    const card = document.createElement("div");
+    card.className = "fig-card";
+    const seen = c.seen.length
+      ? '<div class="fig-seen">Seen in: <b>' + c.seen.join("</b> · <b>") + "</b></div>"
+      : "";
+    card.innerHTML =
+      '<button class="fig-head" type="button">' +
+        '<span class="fig-title"><span class="name">' + c.name + "</span>" +
+        '<span class="chip">' + loopCounts(id) + " counts</span>" +
+        '<span class="show">watch ▸</span></span>' +
+        '<div class="fig-desc">' + c.desc + "</div>" + seen +
+      "</button>" +
+      '<div class="fig-demo">' +
+        '<div class="demo-foot"><a href="index.html?figure=' + id + '">Open in the visualizer →</a>' +
+        '<span class="hint">loops forever · drag the slider to slow it down</span></div>' +
+      "</div>";
+    card.querySelector(".fig-head").addEventListener("click", () => toggleCard(card, id));
+    grid.appendChild(card);
+  }
+}
+</script>
+</body>
+</html>
