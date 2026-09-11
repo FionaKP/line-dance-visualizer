@@ -702,6 +702,18 @@ REPEAT`;
 
 const DEFAULT_URL = "https://www.copperknob.co.uk/stepsheets/LRV9X25/choosin-texas";
 
+// Optional stepsheet proxy for static hosts (GitHub Pages). Paste your
+// deployed Cloudflare Worker URL into the empty string below to give the
+// static site live stepsheet search — see worker/README.md for the two
+// deploy commands. Left empty, the site is fully static (bundled library
+// only). A ?proxy=<url> query parameter overrides it, which is handy for
+// testing against `npx wrangler dev`.
+const PROXY_BASE = ((configured) => {
+  let q = null;
+  try { q = new URLSearchParams(location.search).get("proxy"); } catch (e) { /* ignore */ }
+  return (q || configured).replace(/\/+$/, "");
+})("" /* e.g. "https://line-dance-proxy.YOUR-SUBDOMAIN.workers.dev" */);
+
 // ---------------------------------------------------------------------------
 // Timeline: absolute keyframes for every wall, built from parsed events.
 // ---------------------------------------------------------------------------
@@ -3470,7 +3482,8 @@ function resultRow(d) { // {title, choreo?, count?, wall?, level?, source?, musi
 async function runSearch() {
   const q = document.getElementById("search-q").value.trim();
   await appMode.ready;
-  if (!appMode.server) { renderLibrary(q); return; } // offline: filter the bundled library
+  if (!appMode.server && !appMode.proxy) { renderLibrary(q); return; } // offline: filter the bundled library
+  if (appMode.proxy && !q) { renderLibrary(""); return; }              // proxy: empty search browses the library
   if (!q) { elSearchStatus.textContent = "Type a song, artist, or dance name first."; return; }
   const source = elSearchSource.value;
   const params = new URLSearchParams({
@@ -3486,7 +3499,7 @@ async function runSearch() {
     (source === "all" ? "all sites" : SOURCE_LABELS[source] || source) + "…";
   elSearchResults.innerHTML = "";
   try {
-    const r = await fetch("/api/search?" + params);
+    const r = await fetch(apiBase() + "/api/search?" + params);
     const data = await r.json();
     if (data.error) throw new Error(data.error);
     if (!data.results.length) {
@@ -3511,14 +3524,14 @@ async function runSearch() {
     }
   } catch (err) {
     elSearchStatus.textContent = "Search failed: " + err.message +
-      " (is the app running via server.py?)";
+      (appMode.proxy ? " (is the stepsheet proxy reachable?)" : " (is the app running via server.py?)");
   }
 }
 
 async function loadFromUrl(url, title) {
   elSearchStatus.textContent = "Loading “" + title + "”…";
   try {
-    const r = await fetch("/api/sheet?url=" + encodeURIComponent(url));
+    const r = await fetch(apiBase() + "/api/sheet?url=" + encodeURIComponent(url));
     const data = await r.json();
     if (data.error) throw new Error(data.error);
     sheetInput.value = data.text;
@@ -3549,16 +3562,19 @@ document.getElementById("btn-load").addEventListener("click", () => {
   }
 });
 
-// --- Static mode: server feature detection + the bundled dance library ----
-// The app runs two ways: behind server.py (search proxy, audio analysis,
-// transcripts) or as plain static files (GitHub Pages, python3 -m
-// http.server). One probe on load decides which; in static mode the
-// server-only UI paths turn into offline equivalents — the search card
-// becomes a browser for the bundled library.json, the music card takes a
-// pasted YouTube link with tap-tempo sync — and nothing ever fetches an
-// /api/ endpoint, so a static host shows a clean console.
+// --- Static/proxy mode: feature detection + the bundled dance library -----
+// The app runs three ways: behind server.py (search proxy, audio analysis,
+// transcripts), as static files with a stepsheet proxy configured
+// (GitHub Pages + the Cloudflare Worker in worker/ — live search and
+// sheet loading, no audio analysis), or as plain static files (bundled
+// library only). Two probes on load decide which; outside server mode the
+// server-only UI paths turn into offline equivalents — the music card
+// takes a pasted YouTube link with tap-tempo sync, and the search card
+// either keeps live search (proxy mode) or becomes a browser for the
+// bundled library.json — and a plain static host never fetches an /api/
+// endpoint, so its console stays clean.
 
-const appMode = { server: false, known: false, ready: null };
+const appMode = { server: false, proxy: false, sources: null, known: false, ready: null };
 appMode.ready = (async () => {
   try {
     const ctl = new AbortController();
@@ -3571,9 +3587,32 @@ appMode.ready = (async () => {
     clearTimeout(timer);
     if (r.ok) appMode.server = (await r.json()).mode === "server";
   } catch (e) { /* no server reachable */ }
+  if (!appMode.server && PROXY_BASE) {
+    // no same-origin server, but a stepsheet proxy is configured: ping it.
+    // The worker answers {"mode":"proxy","sources":[...],"audio":false}.
+    try {
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), 4000);
+      const r = await fetch(PROXY_BASE + "/api/ping", { signal: ctl.signal, cache: "no-store" });
+      clearTimeout(timer);
+      if (r.ok) {
+        const ping = await r.json();
+        if (ping.mode === "proxy") {
+          appMode.proxy = true;
+          appMode.sources = Array.isArray(ping.sources) ? ping.sources : null;
+        }
+      }
+    } catch (e) { /* proxy unreachable — fall back to plain static */ }
+  }
   appMode.known = true;
   if (!appMode.server) enterStaticMode();
 })();
+
+// prefix for search/sheet API calls: same-origin behind server.py, the
+// configured worker in proxy mode
+function apiBase() {
+  return appMode.server ? "" : PROXY_BASE;
+}
 
 function parseYouTubeId(q) {
   const m = q.match(/(?:youtube\.com\/(?:watch\?(?:.*&)?v=|embed\/|shorts\/|live\/)|youtu\.be\/)([\w-]{11})/) ||
@@ -3616,20 +3655,49 @@ function renderLibrary(filter) {
 }
 
 async function enterStaticMode() {
-  // search card -> offline library browser (same result-row UI)
-  document.querySelector(".search h2").textContent = "Dance library";
-  document.querySelector(".search-row.filters").style.display = "none";
+  // Two static flavors: with a reachable stepsheet proxy the search card
+  // keeps live search (the bundled library shows while the box is empty);
+  // without one it becomes an offline library browser. The music card
+  // degrades identically in both — audio analysis, YouTube search and
+  // lyric cues are server.py features.
   const note = document.createElement("div");
   note.className = "mode-note";
-  note.textContent = "Offline mode: stepsheet search and automatic music matching need the " +
-    "local server (python3 server.py). Everything else works right here — browse the " +
-    "bundled dances below, paste any stepsheet, and sync music by pasting a YouTube " +
-    "link and tapping the tempo.";
-  document.querySelector(".search h2").after(note);
   const sq = document.getElementById("search-q");
-  sq.placeholder = "Filter the bundled dances…";
-  document.getElementById("btn-search").textContent = "Filter";
-  sq.addEventListener("input", () => renderLibrary(sq.value));
+  if (appMode.proxy) {
+    note.textContent = "Live search: stepsheets are fetched through the search proxy. " +
+      "Automatic music matching still needs the local server (python3 server.py) — " +
+      "sync music by pasting a YouTube link and tapping the tempo. An empty search " +
+      "shows the bundled dance library.";
+    // hide any source the proxy does not offer (and "all" if only one is left)
+    if (appMode.sources) {
+      let live = 0;
+      for (const opt of [...elSearchSource.options]) {
+        if (opt.value === "all") continue;
+        const ok = appMode.sources.includes(opt.value);
+        opt.hidden = !ok;
+        if (!ok && opt.selected) elSearchSource.value = appMode.sources[0] || "copperknob";
+        if (ok) live++;
+      }
+      const all = [...elSearchSource.options].find(o => o.value === "all");
+      if (all) all.hidden = live < 2;
+      updateFilterVisibility();
+    }
+    sq.addEventListener("input", () => {   // emptying the box brings the library back
+      if (!sq.value.trim()) renderLibrary("");
+    });
+  } else {
+    // search card -> offline library browser (same result-row UI)
+    document.querySelector(".search h2").textContent = "Dance library";
+    document.querySelector(".search-row.filters").style.display = "none";
+    note.textContent = "Offline mode: stepsheet search and automatic music matching need the " +
+      "local server (python3 server.py). Everything else works right here — browse the " +
+      "bundled dances below, paste any stepsheet, and sync music by pasting a YouTube " +
+      "link and tapping the tempo.";
+    sq.placeholder = "Filter the bundled dances…";
+    document.getElementById("btn-search").textContent = "Filter";
+    sq.addEventListener("input", () => renderLibrary(sq.value));
+  }
+  document.querySelector(".search h2").after(note);
   // music card: /api/music, /api/audio and /api/transcript are absent
   document.getElementById("btn-music-auto").style.display = "none";
   document.getElementById("btn-cue").style.display = "none";
@@ -3639,7 +3707,9 @@ async function enterStaticMode() {
     const r = await fetch("library.json");
     if (!r.ok) throw new Error("HTTP " + r.status);
     library = (await r.json()).dances;
-    renderLibrary(sq.value);
+    // in proxy mode a live search may already be on screen; only render the
+    // library when the search box is (still) empty
+    if (!appMode.proxy || !sq.value.trim()) renderLibrary(appMode.proxy ? "" : sq.value);
   } catch (e) {
     elSearchStatus.textContent = "Bundled library unavailable (" + e.message +
       ") — paste a stepsheet below instead.";
