@@ -712,7 +712,7 @@ const PROXY_BASE = ((configured) => {
   let q = null;
   try { q = new URLSearchParams(location.search).get("proxy"); } catch (e) { /* ignore */ }
   return (q || configured).replace(/\/+$/, "");
-})("" /* e.g. "https://line-dance-proxy.YOUR-SUBDOMAIN.workers.dev" */);
+})("https://line-dance-proxy.line-dance-proxy.workers.dev");
 
 // ---------------------------------------------------------------------------
 // Timeline: absolute keyframes for every wall, built from parsed events.
