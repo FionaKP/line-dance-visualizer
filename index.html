@@ -381,13 +381,52 @@
   .loader .note { color: var(--muted); font-size: 0.75rem; }
   .warnings { margin-top: 8px; font-size: 0.78rem; color: var(--warn); }
   .warnings div { margin-top: 3px; }
+
+  /* header nav: subtle link over to the learn-the-steps page */
+  header { display: flex; align-items: baseline; gap: 16px; }
+  header .title-wrap { min-width: 0; }
+  header .learn-link {
+    margin-left: auto;
+    color: var(--muted);
+    font-size: 0.8rem;
+    text-decoration: none;
+    white-space: nowrap;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 6px 10px;
+    transition: color 0.15s, border-color 0.15s;
+  }
+  header .learn-link:hover { color: var(--accent); border-color: var(--accent); }
+
+  /* Learn-the-steps embed mode (?figure=<id>&embed=1): just the floor and a
+     minimal control strip — everything else is chrome and hides. */
+  body.embed { padding: 0; }
+  body.embed .app { max-width: none; }
+  body.embed header,
+  body.embed .layout > div:nth-child(2),
+  body.embed .card.music,
+  body.embed .now,
+  body.embed .progress,
+  body.embed .legend { display: none; }
+  body.embed .layout { display: block; }
+  body.embed .card { border: 0; border-radius: 0; box-shadow: none; }
+  body.embed .controls { padding: 8px 10px 10px; gap: 6px; }
+  body.embed #btn-restart, body.embed #btn-prev, body.embed #btn-next,
+  body.embed #cue-seg, body.embed #btn-loop-sec, body.embed #btn-follow,
+  body.embed #btn-groove, body.embed #btn-tick { display: none; }
+  body.embed .bpm { margin-left: auto; }
+  body.embed .bpm input[type=range] { width: 90px; }
+  body.embed .seg button { border-left: 0; }
 </style>
 </head>
 <body>
 <div class="app">
   <header>
-    <h1 id="dance-title"></h1>
-    <div class="meta" id="dance-meta"></div>
+    <div class="title-wrap">
+      <h1 id="dance-title"></h1>
+      <div class="meta" id="dance-meta"></div>
+    </div>
+    <a class="learn-link" href="learn.html">Learn the steps →</a>
   </header>
 
   <div class="layout">
@@ -663,6 +702,7 @@
 
 <script src="parser.js"></script>
 <script src="figures.js"></script>
+<script src="demo.js"></script>
 <script src="tempo.js"></script>
 <script src="boot3d.js"></script>
 <script>
@@ -713,6 +753,25 @@ const PROXY_BASE = ((configured) => {
   try { q = new URLSearchParams(location.search).get("proxy"); } catch (e) { /* ignore */ }
   return (q || configured).replace(/\/+$/, "");
 })("" /* e.g. "https://line-dance-proxy.YOUR-SUBDOMAIN.workers.dev" */);
+
+// ---------------------------------------------------------------------------
+// Learn-the-steps demo mode: ?figure=<figureId> loads a synthesized stepsheet
+// built from that figure's canonical loopable counts (demo.js) through the
+// normal loader path; &embed=1 additionally strips the chrome down to the
+// floor plus a minimal control strip (see body.embed CSS) for learn.html's
+// card iframes.
+// ---------------------------------------------------------------------------
+const EMBED = (() => {
+  let figure = null, on = false;
+  try {
+    const q = new URLSearchParams(location.search);
+    figure = q.get("figure");
+    on = q.get("embed") === "1";
+  } catch (e) { /* ignore */ }
+  if (figure && !(window.FIGURES && FIGURES.FIGURES[figure])) figure = null;
+  return { figure, on };
+})();
+if (EMBED.on) document.body.classList.add("embed");
 
 // ---------------------------------------------------------------------------
 // Timeline: absolute keyframes for every wall, built from parsed events.
@@ -3330,6 +3389,7 @@ async function autoMatchMusic() {
 // search; any failure just leaves the dance usable unsynced.
 let autoSetupSeq = 0;
 async function autoSetupMusic() {
+  if (EMBED.figure || EMBED.on) return;    // demo loops are silent by design
   const seq = ++autoSetupSeq;              // a newer loadDance cancels this one
   if (music.videoId) { setSynced(true); return; }   // restored saved video
   if (!document.getElementById("music-q").value.trim()) return;
@@ -3716,11 +3776,30 @@ async function enterStaticMode() {
   }
 }
 
-// boot with the default dance, parsed from its raw stepsheet
+// boot with the default dance — or, in demo mode, a stepsheet synthesized
+// from the requested figure's canonical counts, fed through the same path
 {
-  const parsed = parseStepsheet(RAW_SHEET);
+  const demoText = EMBED.figure ? DEMO.demoSheet(EMBED.figure, FIGURES.FIGURES) : null;
+  const parsed = parseStepsheet(demoText || RAW_SHEET);
   showWarnings(parsed.warnings);
-  loadDance(parsed, DEFAULT_URL);
+  if (demoText) sheetInput.value = demoText;
+  loadDance(parsed, demoText ? null : DEFAULT_URL);
+  if (demoText) {
+    // calm teaching tempo (saved music prefs must not override it), boots
+    // on (view3d already defaults on), and roll the loop straight away
+    state.bpm = 84;
+    music.exactBpm = null;
+    bpmInput.value = 84;
+    bpmVal.textContent = "84 bpm";
+    reanchor();
+    setPlaying(true);
+    // demo-mode debug handle: lets demo tooling drive and inspect the loop
+    // (rAF is throttled in hidden iframes, so tools seek + render manually)
+    window.__demo = {
+      seek, render, footState, state,
+      get dance() { return dance; }
+    };
+  }
 }
 requestAnimationFrame(frame);
 </script>
