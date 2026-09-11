@@ -1,0 +1,6 @@
+name = "line-dance-proxy"
+main = "src/index.js"
+compatibility_date = "2025-08-01"
+
+# No build step, no bindings: a plain ES-modules worker.
+# Deploy:  npx wrangler login && npx wrangler deploy   (see README.md)

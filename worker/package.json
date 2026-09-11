@@ -1,0 +1,11 @@
+{
+  "name": "line-dance-proxy",
+  "private": true,
+  "type": "module",
+  "description": "Cloudflare Worker stepsheet proxy for the line dance visualizer. No dependencies; package.json exists only so Node and wrangler treat src/index.js as an ES module.",
+  "scripts": {
+    "test": "node test.js",
+    "dev": "npx wrangler dev",
+    "deploy": "npx wrangler deploy"
+  }
+}
