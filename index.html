@@ -863,9 +863,10 @@ function lastPoseOf(arr) {
 function buildTimeline(seed) {
   // figure pass, once per dance: detect figures (tags cached on the dance
   // object — motion, boots, and cues consume these and never re-detect) and
-  // rewrite tagged events to catalog placement BEFORE any keyframe geometry
-  // (so boots' placeFoot attitude/yaw pass reads the styled coordinates)
-  if (window.FIGURES) FIGURES.applyStyling(dance);
+  // apply each figure's motion template BEFORE any keyframe geometry (so
+  // boots' placeFoot attitude/yaw pass reads the templated coordinates).
+  // ctx carries the tempo so templates can modulate motion character.
+  if (window.FIGURES) FIGURES.applyStyling(dance, { bpm: state.bpm });
   kf = { L: [], R: [] };
   thetaKF = [];
   weightKF = [];
@@ -934,6 +935,7 @@ function buildTimeline(seed) {
                     dxo: ev.self ? undefined : ev.dx, dyo: ev.dy,
                     prof: stepProfile(ev, dist) };
         if (ev.turnout !== undefined) k.turnout = ev.turnout; // figure meta -> boots yaw
+        if (ev.accent) k.accent = true; // template accent -> a touch more arc
         kf[ev.foot].push(k);
         if (!ev.lifted && !ev.noWeight) weightKF.push({ t, foot: ev.foot });
       }
@@ -1287,6 +1289,9 @@ function footState(foot, t) {
   const P = PROFILES[next.prof] || PROFILES.step;
   let winScale = P.win || 1;
   let arcAmp = P.arc === undefined ? 1 : P.arc;
+  // figure-template accent: the step where the figure pops gets a touch
+  // more arc (deterministic; landings untouched — the arc is zero at raw=1)
+  if (next.accent) arcAmp *= 1.25;
   let bow = 0;
   // resets out of a held toe/heel pose are one quick late motion: the
   // attitude holds ~75% of its count, the return takes the last ~25%

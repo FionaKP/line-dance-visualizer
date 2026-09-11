@@ -69,6 +69,7 @@ function buildKeyframes(dance) {
         feet[ev.foot] = { x, y, a: theta + (ev.aOff || 0) };
         kf[ev.foot].push({ t, x, y, lifted: !!ev.lifted, pose: ev.pose || "flat",
                            badge: ev.badge || null, impact: !!ev.impact,
+                           accent: !!ev.accent,
                            prof: stepProfile(ev, Math.hypot(x - cur.x, y - cur.y)) });
       }
     }
@@ -130,7 +131,8 @@ function footState(kf, foot, t) {
   if (!next) return base;
   const P = PROFILES[next.prof] || PROFILES.step;
   let winScale = P.win || 1;
-  const arcAmp = P.arc === undefined ? 1 : P.arc;
+  let arcAmp = P.arc === undefined ? 1 : P.arc;
+  if (next.accent) arcAmp *= 1.25; // figure-template accent pop
   if (prev.lifted && (prev.pose === "toe" || prev.pose === "heel") &&
       !next.lifted && (next.prof === "step" || next.prof === "drag")) {
     winScale *= 0.55;
