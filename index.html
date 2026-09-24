@@ -3169,8 +3169,8 @@ async function searchMusic() {
   const q = document.getElementById("music-q").value.trim();
   if (!q) { musicStatus("Type a song name first."); return []; }
   await appMode.ready;
-  if (!appMode.server) {
-    // static mode: no search proxy, but a pasted link or id embeds fine
+  if (!appMode.server && !appMode.audio) {
+    // static mode without audio proxy: no search, but a pasted link or id embeds fine
     const vid = parseYouTubeId(q);
     if (vid) {
       selectVideo(vid, q);
@@ -3183,7 +3183,7 @@ async function searchMusic() {
   musicStatus("Searching YouTube…");
   elMusicResults.innerHTML = "";
   try {
-    const r = await fetch("/api/music?q=" + encodeURIComponent(q));
+    const r = await fetch(apiBase() + "/api/music?q=" + encodeURIComponent(q));
     const data = await r.json();
     if (data.error) throw new Error(data.error);
     if (!data.results.length) { musicStatus("No videos found."); return []; }
@@ -3219,7 +3219,7 @@ async function searchMusic() {
 
 async function analyzeAudio(videoId, onStatus) {
   onStatus("Downloading audio…");
-  const resp = await fetch("/api/audio?v=" + videoId);
+  const resp = await fetch(apiBase() + "/api/audio?v=" + videoId);
   if (!resp.ok) {
     let msg = "audio unavailable";
     try { msg = (await resp.json()).error || msg; } catch (e) { /* not json */ }
@@ -3336,7 +3336,7 @@ async function alignFromLyrics() {
   }
   musicStatus("Reading captions…");
   try {
-    const r = await fetch("/api/transcript?v=" + music.videoId);
+    const r = await fetch(apiBase() + "/api/transcript?v=" + music.videoId);
     const data = await r.json();
     if (data.error) throw new Error(data.error);
     const hit = findCueInTranscript(data.segments, cue.word);
@@ -3365,7 +3365,7 @@ async function autoMatchMusic() {
     for (const res of results.slice(0, 5)) {
       musicStatus("Checking captions: " + res.title.slice(0, 45) + "…");
       try {
-        const d = await (await fetch("/api/transcript?v=" + res.videoId)).json();
+        const d = await (await fetch(apiBase() + "/api/transcript?v=" + res.videoId)).json();
         if (d.segments) { chosen = res; segments = d.segments; break; }
       } catch (err) { /* try next */ }
     }
@@ -3400,8 +3400,8 @@ async function autoSetupMusic() {
   if (!document.getElementById("music-q").value.trim()) return;
   await new Promise(r => setTimeout(r, 400));       // let the first render land
   if (seq !== autoSetupSeq) return;
-  await appMode.ready;                              // static mode has no music search
-  if (!appMode.server || seq !== autoSetupSeq) return;
+  await appMode.ready;                              // need server or proxy+audio for music search
+  if ((!appMode.server && !appMode.audio) || seq !== autoSetupSeq) return;
   await autoMatchMusic();
 }
 
@@ -3665,6 +3665,7 @@ appMode.ready = (async () => {
         if (ping.mode === "proxy") {
           appMode.proxy = true;
           appMode.sources = Array.isArray(ping.sources) ? ping.sources : null;
+          appMode.audio = !!ping.audio;  // worker now supports YouTube audio/music/transcript
         }
       }
     } catch (e) { /* proxy unreachable — fall back to plain static */ }
@@ -3729,10 +3730,13 @@ async function enterStaticMode() {
   note.className = "mode-note";
   const sq = document.getElementById("search-q");
   if (appMode.proxy) {
-    note.textContent = "Live search: stepsheets are fetched through the search proxy. " +
-      "Automatic music matching still needs the local server (python3 server.py) — " +
-      "sync music by pasting a YouTube link and tapping the tempo. An empty search " +
-      "shows the bundled dance library.";
+    note.textContent = appMode.audio
+      ? "Live search with music sync: stepsheets and YouTube audio are fetched through the proxy. " +
+        "An empty search shows the bundled dance library."
+      : "Live search: stepsheets are fetched through the search proxy. " +
+        "Automatic music matching still needs the local server (python3 server.py) — " +
+        "sync music by pasting a YouTube link and tapping the tempo. An empty search " +
+        "shows the bundled dance library.";
     // hide any source the proxy does not offer (and "all" if only one is left)
     if (appMode.sources) {
       let live = 0;
@@ -3763,11 +3767,13 @@ async function enterStaticMode() {
     sq.addEventListener("input", () => renderLibrary(sq.value));
   }
   document.querySelector(".search h2").after(note);
-  // music card: /api/music, /api/audio and /api/transcript are absent
-  document.getElementById("btn-music-auto").style.display = "none";
-  document.getElementById("btn-cue").style.display = "none";
-  document.getElementById("music-q").placeholder = "Paste a YouTube link or video id…";
-  document.getElementById("btn-music").textContent = "Load video";
+  // music card: hide auto features unless the proxy supports audio
+  if (!appMode.audio) {
+    document.getElementById("btn-music-auto").style.display = "none";
+    document.getElementById("btn-cue").style.display = "none";
+    document.getElementById("music-q").placeholder = "Paste a YouTube link or video id…";
+    document.getElementById("btn-music").textContent = "Load video";
+  }
   try {
     const r = await fetch("library.json");
     if (!r.ok) throw new Error("HTTP " + r.status);

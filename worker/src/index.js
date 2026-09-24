@@ -8,10 +8,13 @@
  * saved pages/PDFs and compare with sources.py's reference output.
  *
  * Endpoints:
- *   GET /api/ping                -> {ok, mode:"proxy", sources, audio:false}
+ *   GET /api/ping                -> {ok, mode:"proxy", sources, audio:true}
  *   GET /api/search?q=&source=   -> {results:[...]} (source: copperknob |
  *        &level=&wall=&count_from=&count_to=&lang=   linedancerweb | all)
  *   GET /api/sheet?url=          -> {title, url, text}
+ *   GET /api/music?q=            -> {results:[{videoId,title,channel,length}]}
+ *   GET /api/audio?v=            -> audio/mp4 bytes (first ~280KB for BPM)
+ *   GET /api/transcript?v=       -> {segments:[{t,d,text}],language}
  *
  * Politeness mirrors sources.py: one upstream page (or page + PDF pair)
  * per API call, 20s timeouts, no crawling, browser User-Agent. /api/sheet
@@ -29,6 +32,202 @@ const HEADERS = {
   "Accept": "text/html,application/xhtml+xml",
   "Accept-Language": "en-US,en;q=0.9",
 };
+
+// --- YouTube API (Android innertube client) ---------------------------------
+
+const ANDROID_CLIENT = {
+  clientName: "ANDROID",
+  clientVersion: "20.10.38",
+  androidSdkVersion: 30,
+  userAgent: "com.google.android.youtube/20.10.38 (Linux; U; Android 11) gzip",
+};
+
+function walkJson(node, key) {
+  // Yield every value of `key` anywhere in a nested JSON structure
+  const results = [];
+  function walk(n) {
+    if (n && typeof n === "object") {
+      if (Array.isArray(n)) {
+        for (const item of n) walk(item);
+      } else {
+        for (const [k, v] of Object.entries(n)) {
+          if (k === key) results.push(v);
+          else walk(v);
+        }
+      }
+    }
+  }
+  walk(node);
+  return results;
+}
+
+function parseMusicResults(page) {
+  const m = /var ytInitialData = (\{.*?\});<\/script>/.exec(page);
+  if (!m) return [];
+  let data;
+  try {
+    data = JSON.parse(m[1]);
+  } catch (e) {
+    return [];
+  }
+  const results = [];
+  for (const vr of walkJson(data, "videoRenderer")) {
+    try {
+      const title = (vr.title?.runs || []).map((r) => r.text).join("");
+      const channel = (vr.ownerText?.runs || []).map((r) => r.text).join("");
+      const length = vr.lengthText?.simpleText || "";
+      results.push({ videoId: vr.videoId, title, channel, length });
+    } catch (e) {
+      continue;
+    }
+    if (results.length >= 8) break;
+  }
+  return results;
+}
+
+async function innertubePlayer(videoId) {
+  const body = JSON.stringify({
+    context: { client: ANDROID_CLIENT },
+    videoId,
+  });
+  const r = await fetch("https://www.youtube.com/youtubei/v1/player?prettyPrint=false", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "User-Agent": ANDROID_CLIENT.userAgent,
+    },
+    body,
+    signal: AbortSignal.timeout(20000),
+  });
+  if (!r.ok) throw new Error("Innertube HTTP " + r.status);
+  return r.json();
+}
+
+function pickAudioFormat(data) {
+  const fmts = data.streamingData?.adaptiveFormats || [];
+  const audio = fmts.filter((f) => f.mimeType?.startsWith("audio/") && f.url);
+  if (!audio.length) return null;
+  const mp4 = audio.filter((f) => f.mimeType?.includes("mp4"));
+  // Pick the lowest bitrate for smallest download
+  return (mp4.length ? mp4 : audio).reduce((a, b) =>
+    (a.bitrate || Infinity) < (b.bitrate || Infinity) ? a : b);
+}
+
+async function fetchAudio(videoId) {
+  // Return {blob, mime} or {error}
+  // Un-tokened stream URLs allow only ~300KB total, so grab the first ~280KB
+  // in small ranged chunks. At low bitrates, that's >1min of audio for BPM.
+  let data;
+  try {
+    data = await innertubePlayer(videoId);
+  } catch (e) {
+    return { error: "Failed to get video info: " + (e.message || e) };
+  }
+  const best = pickAudioFormat(data);
+  if (!best) return { error: "No audio stream available for this video." };
+  const length = parseInt(best.contentLength || "0", 10);
+  const mime = (best.mimeType || "audio/mp4").split(";")[0];
+  if (!length) return { error: "Audio stream is missing a length." };
+
+  const target = Math.min(length, 280000);
+  const chunks = [];
+  let downloaded = 0;
+
+  while (downloaded < target) {
+    const end = Math.min(downloaded + 99999, target - 1);
+    let resp;
+    try {
+      resp = await fetch(best.url, {
+        headers: {
+          "User-Agent": ANDROID_CLIENT.userAgent,
+          "Range": `bytes=${downloaded}-${end}`,
+        },
+        signal: AbortSignal.timeout(60000),
+      });
+    } catch (e) {
+      if (chunks.length) break; // analyze what we have
+      return { error: "Audio download failed: " + (e.message || e) };
+    }
+    if (!resp.ok) {
+      if (chunks.length) break;
+      return { error: "Audio download failed: HTTP " + resp.status };
+    }
+    const chunk = new Uint8Array(await resp.arrayBuffer());
+    if (!chunk.length) break;
+    chunks.push(chunk);
+    downloaded += chunk.length;
+  }
+
+  // Concatenate chunks
+  const totalLen = chunks.reduce((s, c) => s + c.length, 0);
+  const blob = new Uint8Array(totalLen);
+  let offset = 0;
+  for (const c of chunks) {
+    blob.set(c, offset);
+    offset += c.length;
+  }
+  return { blob, mime };
+}
+
+async function fetchTranscript(videoId) {
+  let data;
+  try {
+    data = await innertubePlayer(videoId);
+  } catch (e) {
+    return { error: "Failed to get video info: " + (e.message || e) };
+  }
+  const tracks = data.captions?.playerCaptionsTracklistRenderer?.captionTracks || [];
+  if (!tracks.length) return { error: "No captions available for this video." };
+
+  // Prefer English, fall back to first available
+  const track = tracks.find((t) => t.languageCode?.startsWith("en")) || tracks[0];
+  let xml;
+  try {
+    const r = await fetch(track.baseUrl, {
+      headers: { "User-Agent": ANDROID_CLIENT.userAgent },
+      signal: AbortSignal.timeout(20000),
+    });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    xml = await r.text();
+  } catch (e) {
+    return { error: "Failed to fetch captions: " + (e.message || e) };
+  }
+
+  const segs = [];
+  // Match <p t="ms" d="ms">text</p> or <text start="sec" dur="sec">text</text>
+  const pRe = /<p t="(\d+)"(?: d="(\d+)")?[^>]*>([\s\S]*?)<\/p>/g;
+  const textRe = /<text start="([\d.]+)" dur="([\d.]+)"[^>]*>([\s\S]*?)<\/text>/g;
+
+  for (const m of xml.matchAll(pRe)) {
+    let text = htmlUnescape(m[3].replace(/<[^>]+>/g, " "));
+    text = text.split(/\s+/).filter(Boolean).join(" ");
+    if (text && text !== "[Music]" && text !== "[Applause]") {
+      segs.push({
+        t: Math.round(parseInt(m[1], 10) / 10) / 100,
+        d: Math.round(parseInt(m[2] || "0", 10) / 10) / 100,
+        text,
+      });
+    }
+  }
+
+  // Fallback to <text> format if no <p> matches
+  if (!segs.length) {
+    for (const m of xml.matchAll(textRe)) {
+      let text = htmlUnescape(m[3].replace(/<[^>]+>/g, " "));
+      text = text.split(/\s+/).filter(Boolean).join(" ");
+      if (text && text !== "[Music]" && text !== "[Applause]") {
+        segs.push({
+          t: parseFloat(m[1]),
+          d: parseFloat(m[2]),
+          text,
+        });
+      }
+    }
+  }
+
+  if (!segs.length) return { error: "Captions exist but came back empty." };
+  return { segments: segs, language: track.languageCode || "" };
+}
 
 // --- Python-compatible primitives ------------------------------------------
 
@@ -830,15 +1029,50 @@ export default {
     try {
       if (url.pathname === "/api/ping") {
         return jsonResponse({ ok: true, mode: "proxy",
-          sources: Object.keys(SOURCES), audio: false }, 200, cors);
+          sources: Object.keys(SOURCES), audio: true }, 200, cors);
       }
       if (url.pathname === "/api/search") return await handleSearch(url, cors);
       if (url.pathname === "/api/sheet") return await handleSheet(request, url, cors, ctx);
+
+      // --- YouTube endpoints ---
+      if (url.pathname === "/api/music") {
+        const q = url.searchParams.get("q") || "";
+        const page = await fetchText("https://www.youtube.com/results?search_query=" +
+          encodeURIComponent(q));
+        return jsonResponse({ results: parseMusicResults(page) }, 200, cors);
+      }
+
+      if (url.pathname === "/api/audio") {
+        const vid = url.searchParams.get("v") || "";
+        if (!/^[\w-]{11}$/.test(vid)) {
+          return jsonResponse({ error: "Invalid video id." }, 400, cors);
+        }
+        const result = await fetchAudio(vid);
+        if (result.error) {
+          return jsonResponse({ error: result.error }, 502, cors);
+        }
+        return new Response(result.blob, {
+          status: 200,
+          headers: { "Content-Type": result.mime, ...cors },
+        });
+      }
+
+      if (url.pathname === "/api/transcript") {
+        const vid = url.searchParams.get("v") || "";
+        if (!/^[\w-]{11}$/.test(vid)) {
+          return jsonResponse({ error: "Invalid video id." }, 400, cors);
+        }
+        const result = await fetchTranscript(vid);
+        if (result.error) {
+          return jsonResponse(result, 502, cors);
+        }
+        return jsonResponse(result, 200, cors);
+      }
     } catch (e) {
       const msg = e && e.message ? e.message : String(e);
       return jsonResponse({ error: "Upstream request failed: " + msg }, 502, cors);
     }
-    return jsonResponse({ error: "Not found. Endpoints: /api/ping, /api/search, /api/sheet." },
+    return jsonResponse({ error: "Not found. Endpoints: /api/ping, /api/search, /api/sheet, /api/music, /api/audio, /api/transcript." },
       404, cors);
   },
 };
