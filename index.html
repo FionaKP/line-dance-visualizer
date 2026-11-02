@@ -742,6 +742,21 @@ REPEAT`;
 
 const DEFAULT_URL = "https://www.copperknob.co.uk/stepsheets/LRV9X25/choosin-texas";
 
+// Bundled sync defaults: tuned videoId/start/bpm/exactBpm for dances where the
+// proxy isn't available. localStorage overrides these when the user changes
+// settings. Keys are dance URLs (or titles for dances without URLs).
+const SYNC_DEFAULTS = {
+  "https://www.copperknob.co.uk/stepsheets/LRV9X25/choosin-texas": {
+    videoId: "hLOheGDwD_0", start: 18.27, bpm: 112, exactBpm: 112.3
+  },
+  "https://www.linedancerweb.com/dance.php?id=13098": {
+    videoId: "FDMHZFJnk2s", start: 0.33, bpm: 87, exactBpm: 87.2
+  },
+  "https://www.linedancerweb.com/dance.php?id=13094": {
+    videoId: "SskepPEBCv0", start: 0.48, bpm: 117, exactBpm: 116.9
+  }
+};
+
 // Optional stepsheet proxy for static hosts (GitHub Pages). Paste your
 // deployed Cloudflare Worker URL into the empty string below to give the
 // static site live stepsheet search — see worker/README.md for the two
@@ -752,7 +767,7 @@ const PROXY_BASE = ((configured) => {
   let q = null;
   try { q = new URLSearchParams(location.search).get("proxy"); } catch (e) { /* ignore */ }
   return (q || configured).replace(/\/+$/, "");
-})("https://line-dance-proxy.line-dance-proxy.workers.dev");
+})("");
 
 // ---------------------------------------------------------------------------
 // Learn-the-steps demo mode: ?figure=<figureId> loads a synthesized stepsheet
@@ -3085,21 +3100,37 @@ function loadMusicPrefs() {
   elMusicResults.innerHTML = "";
   musicStatus("");
   document.getElementById("music-q").value = dance.meta.music || dance.title;
+
+  // Try localStorage first (user's saved changes override bundled defaults)
+  let prefs = null;
   try {
-    const saved = JSON.parse(localStorage.getItem(musicKey()));
-    if (saved && saved.videoId) {
-      music.start = saved.start || 0;
-      music.exactBpm = saved.exactBpm || null;
-      elStartTime.value = music.start;
-      if (saved.bpm) {
-        state.bpm = saved.bpm;
-        bpmInput.value = saved.bpm;
-        bpmVal.textContent = saved.bpm + " bpm";
-      }
-      selectVideo(saved.videoId, "saved video");
+    prefs = JSON.parse(localStorage.getItem(musicKey()));
+  } catch (e) { /* ignore */ }
+
+  // Fall back to bundled defaults if localStorage has nothing
+  const bundled = SYNC_DEFAULTS[dance.url] || null;
+  if (!prefs && bundled) {
+    prefs = bundled;
+  }
+
+  if (prefs && prefs.videoId) {
+    music.start = prefs.start || 0;
+    music.exactBpm = prefs.exactBpm || null;
+    elStartTime.value = music.start;
+    if (prefs.bpm) {
+      state.bpm = prefs.bpm;
+      bpmInput.value = prefs.bpm;
+      bpmVal.textContent = prefs.bpm + " bpm";
+    }
+    selectVideo(prefs.videoId, bundled && !localStorage.getItem(musicKey()) ? "bundled default" : "saved video");
+    // Auto-enable sync when loading from bundled defaults (gives intro countdown)
+    if (bundled && !localStorage.getItem(musicKey())) {
+      setSynced(true);
+      musicStatus("Loaded bundled music sync for this dance.");
+    } else {
       musicStatus("Restored saved video and sync settings.");
     }
-  } catch (e) { /* ignore */ }
+  }
 }
 
 function ensureYT(cb) {
@@ -3758,10 +3789,9 @@ async function enterStaticMode() {
     // search card -> offline library browser (same result-row UI)
     document.querySelector(".search h2").textContent = "Dance library";
     document.querySelector(".search-row.filters").style.display = "none";
-    note.textContent = "Offline mode: stepsheet search and automatic music matching need the " +
-      "local server (python3 server.py). Everything else works right here — browse the " +
-      "bundled dances below, paste any stepsheet, and sync music by pasting a YouTube " +
-      "link and tapping the tempo.";
+    note.textContent = "Browse the bundled dances below or paste any stepsheet. " +
+      "Some dances include pre-tuned music sync; for others, paste a YouTube link " +
+      "and tap the tempo.";
     sq.placeholder = "Filter the bundled dances…";
     document.getElementById("btn-search").textContent = "Filter";
     sq.addEventListener("input", () => renderLibrary(sq.value));
